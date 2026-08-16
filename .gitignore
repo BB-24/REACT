@@ -1,0 +1,19 @@
+# Python virtual environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Azure Functions local settings (CRITICAL: Prevents leaking local connection strings)
+local.settings.json
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Terraform/Bicep state (if used locally)
+.terraform/
+*.tfstate
+*.tfstate.backup

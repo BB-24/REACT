@@ -1,0 +1,13 @@
+# Person 1: Cloud Orchestration & Infrastructure
+/iac/modules/                   @person1-github
+/src/logic-apps/                @person1-github
+
+# Person 2: Serverless Containment & Hashing
+/src/functions/NetworkContainment/  @person2-github
+/src/functions/ChainOfCustody/      @person2-github
+/src/scripts/                       @person2-github
+
+# Person 3: Data Schema, Containers, & Reporting
+/iac/scripts/init-sql-ledger.sql    @person3-github
+/src/containers/                    @person3-github
+/src/functions/ReportGenerator/     @person3-github
