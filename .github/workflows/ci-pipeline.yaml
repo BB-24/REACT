@@ -24,6 +24,7 @@ jobs:
       functions: ${{ steps.filter.outputs.functions }}
       containers: ${{ steps.filter.outputs.containers }}
       scripts: ${{ steps.filter.outputs.scripts }}
+      has_code_changes: ${{ steps.filter.outputs.infrastructure == 'true' || steps.filter.outputs.functions == 'true' || steps.filter.outputs.containers == 'true' || steps.filter.outputs.scripts == 'true' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -42,6 +43,22 @@ jobs:
               - 'src/containers/**'
             scripts:
               - 'src/scripts/**'
+
+      - name: Summary of Code vs Non-Code Changes
+        run: |
+          echo "=== Component Change Summary ==="
+          echo "Infrastructure : ${{ steps.filter.outputs.infrastructure }}"
+          echo "Functions      : ${{ steps.filter.outputs.functions }}"
+          echo "Containers     : ${{ steps.filter.outputs.containers }}"
+          echo "Scripts        : ${{ steps.filter.outputs.scripts }}"
+          
+          if [ "${{ steps.filter.outputs.infrastructure }}" != "true" ] && \
+             [ "${{ steps.filter.outputs.functions }}" != "true" ] && \
+             [ "${{ steps.filter.outputs.containers }}" != "true" ] && \
+             [ "${{ steps.filter.outputs.scripts }}" != "true" ]; then
+            echo "NOTICE: No application code modified (e.g. documentation, PR template, or metadata updated)."
+            echo "PR changes do not affect code. CI pipeline automatically passing."
+          fi
 
   # ==========================================
   # Job 1: Infrastructure & Orchestration
@@ -159,4 +176,29 @@ jobs:
             done
           else
             echo "No modified bash scripts to validate."
-          fi
+          fi
+
+  # ==========================================
+  # Final Pipeline Status Gate
+  # ==========================================
+  pipeline-result:
+    name: Pipeline Status Check
+    needs: [changes, verify-infrastructure, test-python-functions, build-forensic-container, verify-scripts]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Overall CI Status
+        run: |
+          echo "=== Pipeline Final Evaluation ==="
+          
+          # Check if any component test job failed
+          if [ "${{ needs.verify-infrastructure.result }}" == "failure" ] || \
+             [ "${{ needs.test-python-functions.result }}" == "failure" ] || \
+             [ "${{ needs.build-forensic-container.result }}" == "failure" ] || \
+             [ "${{ needs.verify-scripts.result }}" == "failure" ]; then
+            echo "ERROR: One or more code verification jobs failed."
+            exit 1
+          fi
+
+          echo "SUCCESS: All modified component tests passed, or non-code changes were made (documentation/meta). PR is clear to merge!"
+
