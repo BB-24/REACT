@@ -18,6 +18,7 @@ jobs:
     name: Detect Changed Components
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       infrastructure: ${{ steps.filter.outputs.infrastructure }}
