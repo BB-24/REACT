@@ -4,6 +4,21 @@ __pycache__/
 .venv/
 venv/
 env/
+.pytest_cache/
+
+# Node artifacts. This is a Python project; `npm install` inside a function
+# directory is always a mistake.
+node_modules/
+
+# Forensic artifacts must never be committed. Evidence lives in the enclave
+# storage account, hashed into the SQL ledger -- never in source control.
+*.raw
+*.lime
+*.mem
+*.dmp
+
+# Acquisition tool binaries (WinPmem, AVML, lime.ko) are fetched at deploy time.
+src/scripts/tools/
 
 # Azure Functions local settings (CRITICAL: Prevents leaking local connection strings)
 local.settings.json

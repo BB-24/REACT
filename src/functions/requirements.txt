@@ -1,0 +1,16 @@
+# Azure Functions Python worker (v2 programming model).
+azure-functions>=1.18.0
+
+# Managed-identity authentication for every Azure control- and data-plane call.
+azure-identity>=1.16.0
+
+# Phase 1 - Network containment: build the isolation NSG and swap it onto the NIC.
+azure-mgmt-network>=25.0.0
+azure-mgmt-compute>=30.0.0
+
+# Phase 2 - Write-only SAS minting for the live-response acquisition scripts.
+azure-storage-blob>=12.19.0
+azure-keyvault-secrets>=4.8.0
+
+# Phase 3 - Chain-of-custody ledger writes into Azure SQL.
+pyodbc>=5.1.0
