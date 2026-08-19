@@ -16,7 +16,7 @@ The expected schema is documented in
 import logging
 import re
 
-from . import config
+from . import clients, config
 
 DEFAULT_TABLE = "dbo.EvidenceLedger"
 
@@ -65,15 +65,45 @@ def build_insert(table):
     )
 
 
-def _connect():
-    """Open a SQL connection using the managed identity of the Function App.
+def build_lookup(table, columns):
+    """Return the statement behind ``find_evidence``."""
+    return (
+        "SELECT TOP 1 {columns} FROM {table} "
+        "WHERE IncidentId = ? AND ArtifactType = ? "
+        "ORDER BY LedgerEntryId DESC".format(
+            columns=", ".join(columns), table=table
+        )
+    )
 
-    ``SQL_CONNECTION_STRING`` is expected to use
-    ``Authentication=ActiveDirectoryMsi`` so that no password ever exists.
+
+LOOKUP_COLUMNS = ("BlobName", "Sha256Hash", "SizeBytes", "RecordedUtc")
+
+
+def find_evidence(incident_id, artifact_type, connection_factory=None):
+    """Return the most recent custody record of ``artifact_type``, or ``None``.
+
+    This is the gate REQ-3.4.1 describes: disk snapshotting must not begin until
+    the RAM dump is confirmed in the enclave, and the ledger row is the only
+    confirmation that actually proves the bytes arrived and hashed cleanly.
     """
-    import pyodbc
+    statement = build_lookup(table_name(), LOOKUP_COLUMNS)
+    factory = connection_factory or _connect
+    connection = factory()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(statement, [incident_id, artifact_type])
+        row = cursor.fetchone()
+    finally:
+        connection.close()
 
-    return pyodbc.connect(config.require("SQL_CONNECTION_STRING"), timeout=30)
+    if not row:
+        return None
+    return dict(zip(LOOKUP_COLUMNS, row))
+
+
+def _connect():
+    """Open a connection to the ledger database through the client seam."""
+    return clients.sql_connection()
 
 
 def record_evidence(entry, connection_factory=None):

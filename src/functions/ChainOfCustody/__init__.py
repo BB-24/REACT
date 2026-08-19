@@ -25,10 +25,8 @@ from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
 import azure.functions as func
-from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobClient
 
-from shared import config, ledger
+from shared import clients, config, ledger
 
 bp = func.Blueprint()
 
@@ -36,15 +34,6 @@ VALIDATION_EVENT = "Microsoft.EventGrid.SubscriptionValidationEvent"
 BLOB_CREATED_EVENT = "Microsoft.Storage.BlobCreated"
 
 DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024
-
-_credential = None
-
-
-def _default_credential():
-    global _credential
-    if _credential is None:
-        _credential = DefaultAzureCredential()
-    return _credential
 
 
 def split_blob_url(blob_url):
@@ -71,12 +60,21 @@ def sha256_stream(blob_client):
     return digest.hexdigest(), total
 
 
+MEMORY_IMAGE = "memory-image"
+DISK_IMAGE = "disk-image"
+SNAPSHOT_MANIFEST = "snapshot-manifest"
+
+
 def _artifact_type(blob_name):
     lowered = blob_name.lower()
     if lowered.endswith(".raw") or lowered.endswith(".lime"):
-        return "memory-image"
+        return MEMORY_IMAGE
     if lowered.endswith(".vhd"):
-        return "disk-image"
+        return DISK_IMAGE
+    # DiskSnapshot writes a manifest rather than exporting terabytes of VHD;
+    # hashing the manifest is what binds the snapshot IDs into the ledger.
+    if lowered.endswith(".snapshot.json"):
+        return SNAPSHOT_MANIFEST
     return "artifact"
 
 
@@ -100,11 +98,7 @@ def process_blob_created(event, blob_client_factory=None,
 
     chunk_size = config.get_int("HASH_CHUNK_BYTES", DEFAULT_CHUNK_BYTES)
     factory = blob_client_factory or (
-        lambda url: BlobClient.from_blob_url(
-            url,
-            credential=_default_credential(),
-            max_chunk_get_size=chunk_size,
-        )
+        lambda url: clients.blob_client_from_url(url, max_chunk_get_size=chunk_size)
     )
     blob_client = factory(blob_url)
 

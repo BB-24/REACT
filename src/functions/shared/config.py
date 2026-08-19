@@ -51,3 +51,28 @@ def get_list(name, default=None):
     if raw is None:
         return list(default or [])
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+_TRUTHY = ("1", "true", "yes", "on")
+_FALSY = ("0", "false", "no", "off")
+
+
+def get_bool(name, default=False):
+    """Return a boolean application setting.
+
+    Azure application settings are always strings, so ``"false"`` must not be
+    read as truthy -- which is exactly the bug that would silently leave mock
+    mode enabled in production.
+    """
+    raw = get(name)
+    if raw is None:
+        return default
+    lowered = raw.strip().lower()
+    if lowered in _TRUTHY:
+        return True
+    if lowered in _FALSY:
+        return False
+    raise ConfigError(
+        "Application setting '{0}' must be a boolean (one of {1}), got "
+        "'{2}'.".format(name, ", ".join(_TRUTHY + _FALSY), raw)
+    )

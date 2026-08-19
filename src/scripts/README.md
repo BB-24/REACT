@@ -58,6 +58,27 @@ at a time is staged in `--stage-dir`, defaulting to `/dev/shm`. That is a
 run if the staging directory turns out to be disk-backed, which is what keeps
 the no-disk-write guarantee honest rather than assumed.
 
+## Fetching the tool (REQ-3.3.2)
+
+Neither script assumes the acquisition binary is already on the host. Given
+`-ToolUrl` / `--tool-url` -- a **read-only, blob-scoped** SAS for the tool
+repository container -- it fetches WinPmem or AVML on demand and deletes it
+again on the way out.
+
+Pass `-ToolSha256` / `--tool-sha256` whenever you can. It is the only thing
+standing between a tampered tool repository and a forensic binary executing as
+SYSTEM or root on the target; without it the scripts run the download and warn.
+
+The read token is exposed to the compromised host exactly as the upload token
+is. The worst case is bounded: it is read-only, scoped to one blob, and grants
+no path to the evidence container, which lives under a different token entirely.
+
+On Linux the binary is staged in `/dev/shm`, so **nothing** reaches the block
+device. On Windows the ~1 MB binary does land in `%TEMP%`: there is no tmpfs
+equivalent, and a kernel driver cannot be loaded from memory. That is a bounded
+write of a file we supplied, removed in the `finally` block. The multi-gigabyte
+*image* -- the artifact REQ-3.3.4 is actually about -- still never touches disk.
+
 ## The witness hash
 
 Both scripts fold a SHA-256 over the stream as it leaves the host and stamp the
@@ -92,9 +113,13 @@ Both take the write-only SAS URL returned by `NetworkContainment` as
 .\Acquire-Memory.ps1 `
     -SasUrl $uploadUrl `
     -IncidentId "INC-2024-0042" `
-    -WinPmemPath "C:\Tools\winpmem.exe" `
+    -ToolUrl $winPmemReadSasUrl `
+    -ToolSha256 $winPmemSha256 `
     -InitiatorObjectId $logicAppObjectId
 ```
+
+(Or point `-WinPmemPath` at a binary already staged on the host and omit
+`-ToolUrl` entirely.)
 
 **Linux** — as root:
 
@@ -102,13 +127,24 @@ Both take the write-only SAS URL returned by `NetworkContainment` as
 sudo ./acquire-memory.sh \
     --sas-url "$UPLOAD_URL" \
     --incident-id "INC-2024-0042" \
-    --avml-path /opt/react/avml \
+    --tool-url "$AVML_READ_SAS_URL" \
+    --tool-sha256 "$AVML_SHA256" \
     --initiator-object-id "$LOGIC_APP_OBJECT_ID"
 ```
 
-Both are invoked by the Logic App through **Azure VM Run Command**, which is why
-the SAS arrives as a parameter rather than being minted on the host — the host
-is untrusted and gets no standing credential.
+(Or point `--avml-path` at a binary already staged on the host and omit
+`--tool-url` entirely.)
+
+Both are invoked by the `MemoryAcquisition` function through **Azure Managed Run
+Command**, which is why the SAS arrives as a parameter rather than being minted
+on the host — the host is untrusted and gets no standing credential. Every
+parameter is passed as a *protected* parameter, so none of the three URLs can be
+read back off the VM's run-command resource afterwards.
+
+`MemoryAcquisition` generates a small bootstrap that downloads this script and
+its tool from the repository, then invokes it. That keeps the reviewed
+acquisition logic in one versioned artifact instead of re-emitting it from
+Python on every incident.
 
 ## Operational notes
 

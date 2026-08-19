@@ -24,14 +24,9 @@ Two minting modes are supported, selected by the ``SAS_MODE`` app setting:
 import re
 from datetime import datetime, timedelta, timezone
 
-from azure.identity import DefaultAzureCredential
-from azure.storage.blob import (
-    BlobSasPermissions,
-    BlobServiceClient,
-    generate_blob_sas,
-)
+from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 
-from . import config
+from . import clients, config
 
 DEFAULT_TTL_MINUTES = 60
 # Backdate the token so a few minutes of clock drift on the target host does not
@@ -40,15 +35,10 @@ CLOCK_SKEW_MINUTES = 5
 
 _UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
-_credential = None
-
 
 def _default_credential():
-    """Cache the managed-identity credential across warm invocations."""
-    global _credential
-    if _credential is None:
-        _credential = DefaultAzureCredential()
-    return _credential
+    """The managed-identity credential, or its mock-mode stand-in."""
+    return clients.credential()
 
 
 def account_url(account=None):
@@ -79,25 +69,16 @@ def build_blob_name(incident_id, target_name, artifact="memory", extension="raw"
 
 
 def _account_key_from_key_vault(credential=None):
-    from azure.keyvault.secrets import SecretClient
-
     vault_uri = config.require("KEY_VAULT_URI")
     secret_name = config.get("STORAGE_KEY_SECRET_NAME", "evidence-storage-key")
-    client = SecretClient(
-        vault_url=vault_uri, credential=credential or _default_credential()
-    )
+    client = clients.secret_client(vault_uri, cred=credential)
     return client.get_secret(secret_name).value
 
 
-def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=None,
-                        credential=None, now=None):
-    """Mint a write-only blob SAS and return ``(url_with_sas, expires_on)``.
-
-    The returned URL embeds the token. Treat it as a secret: hand it straight to
-    the Logic App over TLS and never write it to a log, a trace, or a tag.
-    """
+def _mint(blob_name, permission, ttl_minutes, account, container, credential,
+          now):
+    """Sign one blob-scoped SAS. Returns ``(url_with_sas, expires_on)``."""
     account = account or config.require("EVIDENCE_STORAGE_ACCOUNT")
-    container = container or config.get("EVIDENCE_CONTAINER", "evidence")
     ttl = ttl_minutes or config.get_int("SAS_TTL_MINUTES", DEFAULT_TTL_MINUTES)
 
     issued_at = now or datetime.now(timezone.utc)
@@ -108,8 +89,7 @@ def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=Non
         "account_name": account,
         "container_name": container,
         "blob_name": blob_name,
-        # No read, no list, no delete: upload-only by construction.
-        "permission": BlobSasPermissions(create=True, write=True, add=True),
+        "permission": permission,
         "start": start,
         "expiry": expiry,
         "protocol": "https",
@@ -117,9 +97,7 @@ def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=Non
 
     mode = config.get("SAS_MODE", "user-delegation").lower()
     if mode == "user-delegation":
-        service = BlobServiceClient(
-            account_url(account), credential=credential or _default_credential()
-        )
+        service = clients.blob_service_client(account_url(account), cred=credential)
         delegation_key = service.get_user_delegation_key(
             key_start_time=start, key_expiry_time=expiry
         )
@@ -138,3 +116,44 @@ def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=Non
         account_url(account), container, blob_name, token
     )
     return url, expiry
+
+
+def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=None,
+                        credential=None, now=None):
+    """Mint a write-only blob SAS and return ``(url_with_sas, expires_on)``.
+
+    REQ-3.3.3. The returned URL embeds the token. Treat it as a secret: hand it
+    to the target host through Run Command's *protected* parameters and never
+    write it to a log, a trace, or a resource tag.
+    """
+    return _mint(
+        blob_name,
+        # No read, no list, no delete: upload-only by construction.
+        BlobSasPermissions(create=True, write=True, add=True),
+        ttl_minutes,
+        account,
+        container or config.get("EVIDENCE_CONTAINER", "evidence"),
+        credential,
+        now,
+    )
+
+
+def mint_read_only_sas(blob_name, ttl_minutes=None, account=None, container=None,
+                       credential=None, now=None):
+    """Mint a read-only SAS for one blob in the tool repository (REQ-3.3.2).
+
+    The acquisition binaries are fetched by the target host, so this token is
+    exposed to a compromised machine exactly as the upload token is. Read-only
+    and blob-scoped means the worst case is re-downloading a tool the attacker
+    could have obtained from the vendor anyway -- it grants no path to the
+    evidence container, which lives under a different token entirely.
+    """
+    return _mint(
+        blob_name,
+        BlobSasPermissions(read=True),
+        ttl_minutes,
+        account,
+        container or config.get("TOOLS_CONTAINER", "tools"),
+        credential,
+        now,
+    )

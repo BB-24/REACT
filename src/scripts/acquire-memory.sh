@@ -34,6 +34,8 @@ STAGE_DIR="/dev/shm"
 API_VERSION="2021-08-06"
 INITIATOR_OBJECT_ID=""
 AVML_PATH="$(dirname "$0")/tools/avml"
+TOOL_URL=""
+TOOL_SHA256=""
 LIME_MODULE=""
 LIME_PORT=4444
 AZURE_MAX_BLOCKS=50000
@@ -50,6 +52,12 @@ Required:
 Options:
   --source MODE            auto | avml | lime | kcore     (default: auto)
   --avml-path PATH         AVML binary                    (default: ./tools/avml)
+  --tool-url URL           Read-only SAS for AVML in the tool repository;
+                           fetched into the tmpfs staging dir if the binary
+                           is not already present (REQ-3.3.2)
+  --tool-sha256 HEX        Expected SHA-256 of that binary. Strongly
+                           recommended: it is the only check between a
+                           tampered repository and running as root here
   --lime-module PATH       lime.ko, required for --source lime
   --lime-port PORT         LiME TCP listener port         (default: 4444)
   --block-mb N             Put Block size in MB           (default: 64)
@@ -76,6 +84,8 @@ while [ $# -gt 0 ]; do
         --incident-id)         INCIDENT_ID="$2"; shift 2 ;;
         --source)              SOURCE="$2"; shift 2 ;;
         --avml-path)           AVML_PATH="$2"; shift 2 ;;
+        --tool-url)            TOOL_URL="$2"; shift 2 ;;
+        --tool-sha256)         TOOL_SHA256="$2"; shift 2 ;;
         --lime-module)         LIME_MODULE="$2"; shift 2 ;;
         --lime-port)           LIME_PORT="$2"; shift 2 ;;
         --block-mb)            BLOCK_MB="$2"; shift 2 ;;
@@ -116,12 +126,16 @@ BLOCK_BYTES=$((BLOCK_MB * 1024 * 1024))
 STAGE_FILE="$STAGE_DIR/react-block-$$"
 BLOCK_IDS_FILE="$STAGE_DIR/react-blocks-$$"
 HASH_FILE="$STAGE_DIR/react-hash-$$"
+AVML_STAGED="$STAGE_DIR/react-avml-$$"
 SOURCE_HOST="$(hostname)"
 ACQUIRED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LIME_LOADED=0
 
 cleanup() {
-    rm -f "$STAGE_FILE" "$BLOCK_IDS_FILE" "$HASH_FILE"
+    # AVML_STAGED is removed unconditionally for the same reason LIME_LOADED is
+    # handled below: stream_avml runs inside the pipeline subshell, so nothing
+    # it sets ever reaches this trap.
+    rm -f "$STAGE_FILE" "$BLOCK_IDS_FILE" "$HASH_FILE" "$AVML_STAGED"
     # LIME_LOADED is set inside the pipeline subshell, so it never propagates
     # here; unload unconditionally whenever a module was supplied.
     if [ "$LIME_LOADED" -eq 1 ] || [ -n "$LIME_MODULE" ]; then
@@ -137,7 +151,8 @@ resolve_source() {
         echo "$SOURCE"
         return
     fi
-    if [ -x "$AVML_PATH" ] || command -v avml >/dev/null 2>&1; then
+    if [ -x "$AVML_PATH" ] || [ -n "$TOOL_URL" ] \
+        || command -v avml >/dev/null 2>&1; then
         echo avml
     elif [ -n "$LIME_MODULE" ] && [ -f "$LIME_MODULE" ]; then
         echo lime
@@ -149,10 +164,42 @@ lime.ko via --lime-module."
     fi
 }
 
+# REQ-3.3.2: fetch the pre-compiled acquisition tool from the secure blob
+# repository over a read-only SAS. It lands in $STAGE_DIR, which has already
+# been proven to be tmpfs, so not even the tool binary touches the disk.
+fetch_tool() {
+    local url="$1" destination="$2" expected="$3"
+
+    log "Fetching acquisition tool from the tool repository."
+    curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+        "$url" -o "$destination" \
+        || die "Failed to download the acquisition tool."
+    [ -s "$destination" ] || die "Tool download produced an empty file."
+
+    if [ -n "$expected" ]; then
+        local actual
+        actual="$(sha256sum "$destination" | awk '{print $1}')"
+        if [ "$actual" != "$expected" ]; then
+            rm -f "$destination"
+            die "Acquisition tool hash mismatch. Expected $expected, got \
+$actual. The tool repository may be compromised; refusing to execute it."
+        fi
+        log "Acquisition tool hash verified."
+    else
+        log "WARNING: no --tool-sha256 supplied; running the tool unverified."
+    fi
+    chmod 0700 "$destination"
+}
+
 stream_avml() {
     local binary="$AVML_PATH"
-    [ -x "$binary" ] || binary="$(command -v avml)"
-    [ -x "$binary" ] || die "AVML not found or not executable."
+    if [ ! -x "$binary" ] && [ -n "$TOOL_URL" ]; then
+        binary="$AVML_STAGED"
+        fetch_tool "$TOOL_URL" "$binary" "$TOOL_SHA256"
+    fi
+    [ -x "$binary" ] || binary="$(command -v avml || true)"
+    [ -n "$binary" ] && [ -x "$binary" ] \
+        || die "AVML not found or not executable. Supply --avml-path or --tool-url."
     log "Acquiring via AVML to stdout."
     exec "$binary" /dev/stdout
 }

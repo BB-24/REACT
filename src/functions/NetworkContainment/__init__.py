@@ -20,12 +20,9 @@ import logging
 import re
 
 import azure.functions as func
-from azure.identity import DefaultAzureCredential
-from azure.mgmt.compute import ComputeManagementClient
-from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.network.models import NetworkSecurityGroup
 
-from shared import config, sas
+from shared import clients, config, sas
 
 bp = func.Blueprint()
 
@@ -311,9 +308,9 @@ def handle_containment(req, credential=None):
         "Containment requested for VM %s (incident %s).", vm_name, incident_id
     )
 
-    credential = credential or DefaultAzureCredential()
-    compute_client = ComputeManagementClient(credential, subscription)
-    network_client = NetworkManagementClient(credential, subscription)
+    credential = credential or clients.credential()
+    compute_client = clients.compute_client(subscription, cred=credential)
+    network_client = clients.network_client(subscription, cred=credential)
 
     vm = compute_client.virtual_machines.get(resource_group, vm_name)
     nsg = ensure_isolation_nsg(

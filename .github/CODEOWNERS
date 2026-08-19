@@ -2,9 +2,13 @@
 /iac/modules/                   @BB-24
 /src/logic-apps/                @BB-24
 
-# Person 2: Serverless Containment & Hashing
+# Person 2: Serverless Containment, Acquisition & Hashing
 /src/functions/NetworkContainment/  @gitforg
+/src/functions/MemoryAcquisition/   @gitforg
+/src/functions/DiskSnapshot/        @gitforg
 /src/functions/ChainOfCustody/      @gitforg
+/src/functions/MockControl/         @gitforg
+/src/functions/shared/              @gitforg
 /src/scripts/                       @gitforg
 
 # Person 3: Data Schema, Containers, & Reporting

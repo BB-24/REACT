@@ -32,7 +32,17 @@
     Incident identifier, stamped into the blob metadata for the ledger.
 
 .PARAMETER WinPmemPath
-    Path to a WinPmem build that supports writing to stdout.
+    Path to a WinPmem build that supports writing to stdout. When -ToolUrl is
+    also given, this is where the downloaded binary is written.
+
+.PARAMETER ToolUrl
+    Read-only blob SAS URL for WinPmem in the tool repository (REQ-3.3.2). When
+    supplied, the binary is fetched from there if it is not already present.
+
+.PARAMETER ToolSha256
+    Expected SHA-256 of the WinPmem binary. Strongly recommended whenever
+    -ToolUrl is used: it is the only thing standing between a tampered tool
+    repository and a forensic tool running as SYSTEM on the target.
 
 .PARAMETER WinPmemArgs
     Arguments passed to WinPmem. Must direct output to stdout.
@@ -52,6 +62,8 @@ param(
     [Parameter(Mandatory = $true)][string]$SasUrl,
     [Parameter(Mandatory = $true)][string]$IncidentId,
     [string]$WinPmemPath = "$PSScriptRoot\tools\winpmem.exe",
+    [string]$ToolUrl = '',
+    [string]$ToolSha256 = '',
     [string]$WinPmemArgs = '-',
     [ValidateRange(4, 256)][int]$BlockSizeMB = 64,
     [string]$InitiatorObjectId = '',
@@ -65,9 +77,67 @@ Add-Type -AssemblyName System.Net.Http
 
 $AZURE_MAX_BLOCKS = 50000
 
+# Set only when this script downloaded the tool itself, so cleanup never
+# removes a binary the responder staged on the host deliberately.
+$script:DownloadedToolPath = $null
+
 function Write-Step {
     param([string]$Message)
     Write-Host ("[{0:u}] {1}" -f (Get-Date).ToUniversalTime(), $Message)
+}
+
+function Assert-ToolHash {
+    param([string]$Path, [string]$ExpectedSha256)
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ($actual -ne $ExpectedSha256.Trim().ToUpperInvariant()) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw ("Acquisition tool hash mismatch. Expected {0}, got {1}. The " +
+            "tool repository may be compromised; refusing to execute it." -f `
+                $ExpectedSha256, $actual)
+    }
+    Write-Step 'Acquisition tool hash verified.'
+}
+
+function Get-AcquisitionTool {
+    <#
+        REQ-3.3.2: fetch the pre-compiled acquisition tool from the secure blob
+        repository over a read-only SAS.
+
+        The ~1 MB binary is the one thing that does land on the target's disk:
+        Windows has no tmpfs, and a kernel driver cannot be loaded from memory.
+        That is a bounded write of a file we supplied, and it is deleted again
+        in the finally block. The multi-gigabyte image -- the artifact SOP 2
+        actually cares about -- still never touches the disk.
+    #>
+    param([string]$Url, [string]$Destination, [string]$ExpectedSha256)
+
+    $directory = Split-Path -Parent $Destination
+    if ($directory -and -not (Test-Path -LiteralPath $directory)) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
+
+    Write-Step 'Fetching WinPmem from the tool repository.'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $previous = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+    }
+    finally {
+        $ProgressPreference = $previous
+    }
+
+    if (-not (Test-Path -LiteralPath $Destination)) {
+        throw 'Tool download reported success but produced no file.'
+    }
+    $script:DownloadedToolPath = $Destination
+    if ($ExpectedSha256) {
+        Assert-ToolHash -Path $Destination -ExpectedSha256 $ExpectedSha256
+    }
+    else {
+        Write-Warning ('No -ToolSha256 supplied; the downloaded tool is being ' +
+            'executed unverified.')
+    }
 }
 
 function New-BlockId {
@@ -147,7 +217,15 @@ if ($WinPmemArgs -notmatch '(^|\s)-(\s|$)' -and $WinPmemArgs -notlike '*stdout*'
         "Writing a .raw file to the target disk is forbidden by SOP 2." -f $WinPmemArgs)
 }
 if (-not (Test-Path -LiteralPath $WinPmemPath)) {
-    throw ("WinPmem not found at '{0}'." -f $WinPmemPath)
+    if (-not $ToolUrl) {
+        throw ("WinPmem not found at '{0}' and no -ToolUrl was supplied to " +
+            "fetch it from the tool repository." -f $WinPmemPath)
+    }
+    Get-AcquisitionTool -Url $ToolUrl -Destination $WinPmemPath `
+        -ExpectedSha256 $ToolSha256
+}
+elseif ($ToolSha256) {
+    Assert-ToolHash -Path $WinPmemPath -ExpectedSha256 $ToolSha256
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -256,4 +334,9 @@ finally {
     # Zero the buffer so the last block of physical memory does not linger in
     # this process's working set.
     if ($null -ne $buffer) { [Array]::Clear($buffer, 0, $buffer.Length) }
+    # Leave nothing of ours on the evidence source.
+    if ($script:DownloadedToolPath) {
+        Remove-Item -LiteralPath $script:DownloadedToolPath -Force `
+            -ErrorAction SilentlyContinue
+    }
 }

@@ -6,13 +6,16 @@ ledger schema in `iac/scripts/init-sql-ledger.sql` (Person 3,
 
 `iac/scripts/init-sql-ledger.sql` is outside Person 2's CODEOWNERS boundary, so
 this file states the contract rather than editing the schema. Person 3 owns the
-DDL below.
+DDL below and the script that applies it.
 
-## Proposed DDL
+## Required DDL
 
-An **updatable ledger table** is required, not an ordinary table. Azure SQL then
-maintains a tamper-evident history and a verifiable digest, which is what makes
-these rows defensible as a chain of custody rather than an ordinary audit log.
+An **append-only ledger table**, not an ordinary table and not an *updatable*
+ledger table. An updatable ledger table permits UPDATE and DELETE and records
+the prior version in a history table; that is right for business data whose edit
+history must be provable, and wrong here. A custody record must never be edited
+at all, and the engine refusing the statement outright is a stronger guarantee
+than an audit trail showing that someone tried.
 
 ```sql
 CREATE TABLE dbo.EvidenceLedger
@@ -29,14 +32,16 @@ CREATE TABLE dbo.EvidenceLedger
     InitiatorObjectId  NVARCHAR(128)  NOT NULL,
     SourceHost         NVARCHAR(256)  NOT NULL
 )
-WITH (LEDGER = ON);
+WITH (LEDGER = ON (APPEND_ONLY = ON));
 
 -- Backs the WHERE NOT EXISTS duplicate guard; Event Grid delivers at least once.
 CREATE INDEX IX_EvidenceLedger_Blob
     ON dbo.EvidenceLedger (BlobUri, Sha256Hash);
 
+-- Backs ledger.find_evidence, the REQ-3.4.1 gate that blocks disk snapshotting
+-- until a memory-image row exists.
 CREATE INDEX IX_EvidenceLedger_Incident
-    ON dbo.EvidenceLedger (IncidentId);
+    ON dbo.EvidenceLedger (IncidentId, ArtifactType);
 ```
 
 ## Notes for Person 3
@@ -54,7 +59,12 @@ CREATE INDEX IX_EvidenceLedger_Incident
   that triggered the response, read from the blob metadata the acquisition
   script stamps, and falling back to the `LOGIC_APP_PRINCIPAL_ID` app setting.
 - **ReportGenerator** should read `Sha256Hash`, `AcquiredUtc` and
-  `InitiatorObjectId` for the custody section of the PDF.
+  `InitiatorObjectId` for the custody section of the PDF. The
+  `dbo.vw_IncidentCustody` view joins in each row's ledger commit time, which
+  comes from the ledger's own transaction record and so cannot be back-dated.
+- **`ArtifactType`** is one of `memory-image`, `disk-image`, `snapshot-manifest`
+  or `artifact`. `snapshot-manifest` rows are written by DiskSnapshot and name
+  every disk snapshot taken for an incident.
 
 ## Required application settings
 
@@ -64,6 +74,12 @@ CREATE INDEX IX_EvidenceLedger_Incident
 | `LEDGER_TABLE` | Override target table | `dbo.EvidenceLedger` |
 | `EVIDENCE_CONTAINER` | Enclave container name | `evidence` |
 | `EVIDENCE_STORAGE_ACCOUNT` | Enclave storage account | `reactenclave01` |
+| `TOOLS_CONTAINER` | Acquisition tool repository | `tools` |
+| `REACT_MOCK_MODE` | Run against the simulated estate | `false` |
+| `FORENSIC_SUBSCRIPTION_ID` | Enclave subscription (REQ-3.4.3) | GUID |
+| `FORENSIC_RESOURCE_GROUP` | Enclave resource group | `rg-forensic-enclave` |
+| `FORENSIC_LOCATION` | Region for enclave snapshot copies | `eastus` |
+| `ACQUISITION_TIMEOUT_SECONDS` | Run Command timeout | `5400` |
 | `HASH_CHUNK_BYTES` | Streaming chunk size | `8388608` |
 | `LOGIC_APP_PRINCIPAL_ID` | Fallback initiator object ID | AAD object GUID |
 | `SAS_MODE` | `user-delegation` (default) or `key-vault` | `user-delegation` |
@@ -78,6 +94,10 @@ The Function App's managed identity needs:
 - `Storage Blob Data Contributor` **and** `Storage Blob Delegator` on the
   enclave account (the latter is what permits user-delegation SAS minting),
 - `Network Contributor` on the target resource group (NSG create, NIC update),
+- `Virtual Machine Contributor` on the target resource group (Run Command
+  execution and managed-disk snapshot creation),
+- `Disk Snapshot Contributor` on the enclave resource group (the
+  cross-subscription `CopyStart` destination),
 - `Reader` on the target VM,
 - a contained database user mapped to its identity, with `INSERT` and `SELECT`
   on the ledger table.
