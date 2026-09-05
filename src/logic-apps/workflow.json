@@ -1,0 +1,177 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "containmentFunctionUrl": { "type": "String" },
+    "acquisitionArmRequestUrl": { "type": "String" },
+    "acquisitionStatusUrl": { "type": "String" },
+    "analysisPipelineUrl": { "type": "String" },
+    "evidenceBlobUriTemplate": { "type": "String" }
+  },
+  "triggers": {
+    "Incident_Webhook": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "IncidentID",
+            "TargetVM",
+            "IPAddress",
+            "SubscriptionID",
+            "IncidentSeverity"
+          ],
+          "properties": {
+            "IncidentID": { "type": "string", "minLength": 1 },
+            "TargetVM": { "type": "string", "minLength": 1, "description": "Full Azure resource ID of the target VM." },
+            "IPAddress": { "type": "string", "minLength": 1 },
+            "SubscriptionID": { "type": "string", "pattern": "^[0-9a-fA-F-]{36}$" },
+            "IncidentSeverity": { "type": "string", "enum": ["Low", "Medium", "High", "Critical"] },
+            "ResourceGroupName": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "actions": {
+    "Parse_Incident": {
+      "type": "ParseJson",
+      "inputs": {
+        "content": "@triggerBody()",
+        "schema": {
+          "type": "object",
+          "required": [
+            "IncidentID",
+            "TargetVM",
+            "IPAddress",
+            "SubscriptionID",
+            "IncidentSeverity"
+          ],
+          "properties": {
+            "IncidentID": { "type": "string" },
+            "TargetVM": { "type": "string" },
+            "IPAddress": { "type": "string" },
+            "SubscriptionID": { "type": "string" },
+            "IncidentSeverity": { "type": "string" },
+            "ResourceGroupName": { "type": "string" }
+          }
+        }
+      },
+      "runAfter": {}
+    },
+    "High_Or_Critical_Severity_Only": {
+      "type": "If",
+      "expression": {
+        "or": [
+          { "equals": ["@body('Parse_Incident')?['IncidentSeverity']", "High"] },
+          { "equals": ["@body('Parse_Incident')?['IncidentSeverity']", "Critical"] }
+        ]
+      },
+      "actions": {
+        "Call_Network_Containment": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "@parameters('containmentFunctionUrl')",
+            "headers": { "Content-Type": "application/json" },
+            "body": "@body('Parse_Incident')"
+          },
+          "runAfter": {}
+        },
+        "Check_Containment_Success": {
+          "type": "If",
+          "expression": {
+            "equals": ["@outputs('Call_Network_Containment')['statusCode']", 200]
+          },
+          "actions": {
+            "Start_Acquisition_Workflow": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@parameters('acquisitionArmRequestUrl')",
+                "headers": { "Content-Type": "application/json" },
+                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" },
+                "body": {
+                  "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                  "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                  "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))"
+                }
+              },
+              "runAfter": {}
+            },
+            "Wait_For_Evidence_Acquisition": {
+              "type": "Until",
+              "expression": "@equals(body('Get_Acquisition_Status')?['status'], 'Completed')",
+              "limit": { "count": 60, "timeout": "PT2H" },
+              "actions": {
+                "Get_Acquisition_Status": {
+                  "type": "Http",
+                  "inputs": {
+                    "method": "GET",
+                    "uri": "@concat(parameters('acquisitionStatusUrl'), '?incidentId=', encodeUriComponent(body('Parse_Incident')?['IncidentID']))",
+                    "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                  },
+                  "runAfter": {}
+                },
+                "Delay_Before_Retry": {
+                  "type": "Wait",
+                  "inputs": { "interval": { "count": 30, "unit": "Second" } },
+                  "runAfter": { "Get_Acquisition_Status": ["Succeeded"] }
+                }
+              },
+              "runAfter": { "Start_Acquisition_Workflow": ["Succeeded"] }
+            },
+            "Start_Analysis_Pipeline": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@parameters('analysisPipelineUrl')",
+                "headers": { "Content-Type": "application/json" },
+                "body": {
+                  "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                  "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                  "IPAddress": "@body('Parse_Incident')?['IPAddress']",
+                  "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
+                  "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
+                  "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))",
+                  "ContainmentDetails": "@body('Call_Network_Containment')",
+                  "PipelineStatus": "AcquisitionCompleted",
+                  "Timestamp": "@{utcNow()}"
+                }
+              },
+              "runAfter": { "Wait_For_Evidence_Acquisition": ["Succeeded"] }
+            }
+          },
+          "else": {
+            "actions": {
+              "Record_Containment_Failure": {
+                "type": "Compose",
+                "inputs": {
+                  "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                  "Error": "Containment function returned non-200 status",
+                  "Details": "@body('Call_Network_Containment')",
+                  "Timestamp": "@{utcNow()}"
+                },
+                "runAfter": {}
+              }
+            }
+          },
+          "runAfter": { "Call_Network_Containment": ["Succeeded", "Failed"] }
+        }
+      },
+      "else": {
+        "actions": {
+          "Ignored_Non_Severe_Incident": {
+            "type": "Compose",
+            "inputs": "@concat('Incident ', body('Parse_Incident')?['IncidentID'], ' was not contained because its severity is neither High nor Critical.')",
+            "runAfter": {}
+          }
+        }
+      },
+      "runAfter": { "Parse_Incident": ["Succeeded"] }
+    }
+  },
+  "outputs": {}
+}
