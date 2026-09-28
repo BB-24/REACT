@@ -123,6 +123,7 @@ jobs:
 
       - name: Run Unit Tests on Changed Components
         run: |
+          export PYTHONPATH="${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src${PYTHONPATH:+:$PYTHONPATH}"
           CHANGED_TESTS=$(git diff --name-only origin/main HEAD | grep -E '(^|/)(test_.*|.*_test)\.py$' || true)
           if [ -n "$CHANGED_TESTS" ]; then
             echo "Running Pytest on modified test modules:"
