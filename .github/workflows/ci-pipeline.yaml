@@ -123,16 +123,22 @@ jobs:
 
       - name: Run Unit Tests on Changed Components
         run: |
-          CHANGED_TESTS=$(git diff --name-only origin/main HEAD | grep -E '^src/functions/.*(test_.*|.*_test)\.py$' || true)
+          CHANGED_TESTS=$(git diff --name-only origin/main HEAD | grep -E '(^|/)(test_.*|.*_test)\.py$' || true)
           if [ -n "$CHANGED_TESTS" ]; then
             echo "Running Pytest on modified test modules:"
             echo "$CHANGED_TESTS"
             pytest $CHANGED_TESTS
           else
-            echo "Running test suite targeting modified function packages..."
-            pytest src/functions/
+            TEST_FILES=$(find tests src/functions -type f \( -name 'test_*.py' -o -name '*_test.py' \) 2>/dev/null || true)
+            if [ -n "$TEST_FILES" ]; then
+              echo "No test files changed; running the available Python test suite:"
+              printf '%s\n' "$TEST_FILES"
+              pytest
+            else
+              echo "No pytest tests found under tests or src/functions; skipping tests."
+            fi
           fi
-          echo "Python tests passed!"
+          echo "Python test step completed."
 
   # ==========================================
   # Job 3: Docker Containers & Analysis
@@ -202,4 +208,4 @@ jobs:
           fi
 
           echo "SUCCESS: All modified component tests passed, or non-code changes were made (documentation/meta). PR is clear to merge!"
-
+
