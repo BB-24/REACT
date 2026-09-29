@@ -1,0 +1,849 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "6684889488168471041"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus",
+      "metadata": {
+        "description": "Primary Azure region for all resources."
+      }
+    },
+    "compromisedEnvironmentRgName": {
+      "type": "string",
+      "defaultValue": "Compromised-Environment-RG",
+      "metadata": {
+        "description": "Name of the compromised environment resource group."
+      }
+    },
+    "forensicEnclaveRgName": {
+      "type": "string",
+      "defaultValue": "Forensic-Enclave-RG",
+      "metadata": {
+        "description": "Name of the forensic enclave resource group."
+      }
+    },
+    "functionAppName": {
+      "type": "string",
+      "defaultValue": "[format('aacfp-containment-{0}', uniqueString(subscription().id, parameters('location')))]",
+      "metadata": {
+        "description": "Base name for the Containment Function App."
+      }
+    },
+    "functionStorageName": {
+      "type": "string",
+      "defaultValue": "[format('aacfpstg{0}', uniqueString(subscription().id, parameters('location')))]",
+      "metadata": {
+        "description": "Storage Account name for the Function App runtime (3-24 lowercase alphanumeric characters)."
+      }
+    },
+    "logicAppName": {
+      "type": "string",
+      "defaultValue": "aacfp-incident-response",
+      "metadata": {
+        "description": "Name for the incident-response Logic App."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "Application": "AACFP",
+        "Project": "Forensic-Containment-Pipeline",
+        "Environment": "Production"
+      },
+      "metadata": {
+        "description": "Standard tags applied across all deployed resources."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-resource-groups",
+      "location": "[deployment().location]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "compromisedEnvironmentRgName": {
+            "value": "[parameters('compromisedEnvironmentRgName')]"
+          },
+          "forensicEnclaveRgName": {
+            "value": "[parameters('forensicEnclaveRgName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "6574667666912241332"
+            }
+          },
+          "parameters": {
+            "compromisedEnvironmentRgName": {
+              "type": "string",
+              "defaultValue": "Compromised-Environment-RG",
+              "metadata": {
+                "description": "Name of the compromised environment resource group."
+              }
+            },
+            "forensicEnclaveRgName": {
+              "type": "string",
+              "defaultValue": "Forensic-Enclave-RG",
+              "metadata": {
+                "description": "Name of the forensic enclave resource group."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for both resource groups."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Optional tags applied consistently to both resource groups."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Resources/resourceGroups",
+              "apiVersion": "2024-03-01",
+              "name": "[parameters('compromisedEnvironmentRgName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('Purpose', 'CompromisedEnvironment', 'ManagedBy', 'AACFP'))]"
+            },
+            {
+              "type": "Microsoft.Resources/resourceGroups",
+              "apiVersion": "2024-03-01",
+              "name": "[parameters('forensicEnclaveRgName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('Purpose', 'ForensicEnclave', 'ManagedBy', 'AACFP'))]"
+            }
+          ],
+          "outputs": {
+            "compromisedEnvironmentResourceGroupName": {
+              "type": "string",
+              "value": "[parameters('compromisedEnvironmentRgName')]"
+            },
+            "forensicEnclaveResourceGroupName": {
+              "type": "string",
+              "value": "[parameters('forensicEnclaveRgName')]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-containment-function",
+      "resourceGroup": "[parameters('forensicEnclaveRgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "functionAppName": {
+            "value": "[parameters('functionAppName')]"
+          },
+          "storageAccountName": {
+            "value": "[take(toLower(parameters('functionStorageName')), 24)]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "11242420114582902483"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Region for the Function App resources."
+              }
+            },
+            "functionAppName": {
+              "type": "string",
+              "metadata": {
+                "description": "Globally unique Function App name."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Globally unique Storage Account name for the Function App runtime."
+              }
+            },
+            "packageUri": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Azure Functions deployment package URI, including a SAS token when private."
+              }
+            },
+            "linuxFxVersion": {
+              "type": "string",
+              "defaultValue": "PYTHON|3.11",
+              "metadata": {
+                "description": "Runtime version. The application code targets Python 3.10+."
+              }
+            },
+            "appSettings": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Optional application settings, such as EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Optional tags applied to all resources in this module."
+              }
+            }
+          },
+          "variables": {
+            "copy": [
+              {
+                "name": "customAppSettings",
+                "count": "[length(items(parameters('appSettings')))]",
+                "input": {
+                  "name": "[items(parameters('appSettings'))[copyIndex('customAppSettings')].key]",
+                  "value": "[string(items(parameters('appSettings'))[copyIndex('customAppSettings')].value)]"
+                }
+              }
+            ],
+            "runFromPackageSetting": "[if(not(empty(parameters('packageUri'))), createArray(createObject('name', 'WEBSITE_RUN_FROM_PACKAGE', 'value', parameters('packageUri'))), createArray())]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('storageAccountName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "minimumTlsVersion": "TLS1_2",
+                "allowBlobPublicAccess": false,
+                "supportsHttpsTrafficOnly": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/serverfarms",
+              "apiVersion": "2023-12-01",
+              "name": "[format('{0}-plan', parameters('functionAppName'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Y1",
+                "tier": "Dynamic"
+              },
+              "properties": {
+                "reserved": true
+              }
+            },
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('functionAppName')]",
+              "location": "[parameters('location')]",
+              "kind": "functionapp,linux",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('functionAppName')))]",
+                "httpsOnly": true,
+                "siteConfig": {
+                  "linuxFxVersion": "[parameters('linuxFxVersion')]",
+                  "minTlsVersion": "1.2",
+                  "ftpsState": "Disabled",
+                  "appSettings": "[concat(createArray(createObject('name', 'AzureWebJobsStorage', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', parameters('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)), createObject('name', 'FUNCTIONS_EXTENSION_VERSION', 'value', '~4'), createObject('name', 'FUNCTIONS_WORKER_RUNTIME', 'value', 'python'), createObject('name', 'REGION_NAME', 'value', parameters('location'))), variables('runFromPackageSetting'), variables('customAppSettings'))]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', format('{0}-plan', parameters('functionAppName')))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "functionAppId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+            },
+            "functionAppPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('functionAppName')), '2023-12-01', 'full').identity.principalId]"
+            },
+            "functionAppDefaultHostName": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('functionAppName')), '2023-12-01').defaultHostName]"
+            },
+            "containmentFunctionUrl": {
+              "type": "string",
+              "value": "[format('https://{0}/api/NetworkContainment', reference(resourceId('Microsoft.Web/sites', parameters('functionAppName')), '2023-12-01').defaultHostName)]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/deployments', 'deploy-resource-groups')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-containment-rbac",
+      "resourceGroup": "[parameters('compromisedEnvironmentRgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function'), '2025-04-01').outputs.functionAppPrincipalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "6470412594797208065"
+            }
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Principal ID of the Function App Managed Identity to grant permissions."
+              }
+            }
+          },
+          "variables": {
+            "networkContributorRoleId": "4d3025cd-af43-4a71-b66d-5710428f242c"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('networkContributorRoleId'))]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "description": "Grant Network Contributor on Compromised-Environment-RG to Forensic Containment Function App"
+              }
+            }
+          ],
+          "outputs": {
+            "roleAssignmentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function')]",
+        "[subscriptionResourceId('Microsoft.Resources/deployments', 'deploy-resource-groups')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "deploy-logic-app",
+      "resourceGroup": "[parameters('forensicEnclaveRgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "logicAppName": {
+            "value": "[parameters('logicAppName')]"
+          },
+          "containmentFunctionUrl": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function'), '2025-04-01').outputs.containmentFunctionUrl.value]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "6371611046222270851"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Region for the Logic App."
+              }
+            },
+            "logicAppName": {
+              "type": "string",
+              "defaultValue": "aacfp-incident-response",
+              "metadata": {
+                "description": "Name of the incident-response Logic App."
+              }
+            },
+            "containmentFunctionUrl": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Function endpoint used for isolation. Prefer a function key or Entra ID protected endpoint."
+              }
+            },
+            "acquisitionArmRequestUrl": {
+              "type": "string",
+              "defaultValue": "[format('{0}providers/Microsoft.Logic/workflows/dummy-acquisition/triggers/manual/run?api-version=2016-06-01', environment().resourceManager)]",
+              "metadata": {
+                "description": "ARM trigger-run endpoint for the acquisition workflow owned by Person 2 (for example .../triggers/manual/run?api-version=2016-06-01)."
+              }
+            },
+            "acquisitionStatusUrl": {
+              "type": "string",
+              "defaultValue": "[format('{0}providers/Microsoft.Logic/workflows/dummy-acquisition/status', environment().resourceManager)]",
+              "metadata": {
+                "description": "Endpoint that returns evidence acquisition status. It must return { status: \"Completed\" } when ready."
+              }
+            },
+            "analysisPipelineUrl": {
+              "type": "string",
+              "defaultValue": "https://forensic-analysis.azurewebsites.net/api/ProcessEvidence",
+              "metadata": {
+                "description": "Endpoint for Person 3 analysis pipeline."
+              }
+            },
+            "evidenceBlobUriTemplate": {
+              "type": "string",
+              "defaultValue": "[format('https://forensicevidence.blob.{0}/evidence/{{0}}/{{1}}.raw', environment().suffixes.storage)]",
+              "metadata": {
+                "description": "Blob URI format string. {0} is IncidentID and {1} is the target VM name."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Optional tags to apply to the Logic App."
+              }
+            }
+          },
+          "variables": {
+            "$fxv#0": {
+              "$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json#",
+              "contentVersion": "1.0.0.0",
+              "parameters": {
+                "containmentFunctionUrl": {
+                  "type": "String"
+                },
+                "acquisitionArmRequestUrl": {
+                  "type": "String"
+                },
+                "acquisitionStatusUrl": {
+                  "type": "String"
+                },
+                "analysisPipelineUrl": {
+                  "type": "String"
+                },
+                "evidenceBlobUriTemplate": {
+                  "type": "String"
+                }
+              },
+              "triggers": {
+                "Incident_Webhook": {
+                  "type": "Request",
+                  "kind": "Http",
+                  "inputs": {
+                    "schema": {
+                      "type": "object",
+                      "required": [
+                        "IncidentID",
+                        "TargetVM",
+                        "IPAddress",
+                        "SubscriptionID",
+                        "IncidentSeverity"
+                      ],
+                      "properties": {
+                        "IncidentID": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "TargetVM": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "Full Azure resource ID of the target VM."
+                        },
+                        "IPAddress": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "SubscriptionID": {
+                          "type": "string",
+                          "pattern": "^[0-9a-fA-F-]{36}$"
+                        },
+                        "IncidentSeverity": {
+                          "type": "string",
+                          "enum": [
+                            "Low",
+                            "Medium",
+                            "High",
+                            "Critical"
+                          ]
+                        },
+                        "ResourceGroupName": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "actions": {
+                "Parse_Incident": {
+                  "type": "ParseJson",
+                  "inputs": {
+                    "content": "@triggerBody()",
+                    "schema": {
+                      "type": "object",
+                      "required": [
+                        "IncidentID",
+                        "TargetVM",
+                        "IPAddress",
+                        "SubscriptionID",
+                        "IncidentSeverity"
+                      ],
+                      "properties": {
+                        "IncidentID": {
+                          "type": "string"
+                        },
+                        "TargetVM": {
+                          "type": "string"
+                        },
+                        "IPAddress": {
+                          "type": "string"
+                        },
+                        "SubscriptionID": {
+                          "type": "string"
+                        },
+                        "IncidentSeverity": {
+                          "type": "string"
+                        },
+                        "ResourceGroupName": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "runAfter": {}
+                },
+                "High_Or_Critical_Severity_Only": {
+                  "type": "If",
+                  "expression": {
+                    "or": [
+                      {
+                        "equals": [
+                          "@body('Parse_Incident')?['IncidentSeverity']",
+                          "High"
+                        ]
+                      },
+                      {
+                        "equals": [
+                          "@body('Parse_Incident')?['IncidentSeverity']",
+                          "Critical"
+                        ]
+                      }
+                    ]
+                  },
+                  "actions": {
+                    "Call_Network_Containment": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "POST",
+                        "uri": "@parameters('containmentFunctionUrl')",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": "@body('Parse_Incident')"
+                      },
+                      "runAfter": {}
+                    },
+                    "Check_Containment_Success": {
+                      "type": "If",
+                      "expression": {
+                        "equals": [
+                          "@outputs('Call_Network_Containment')['statusCode']",
+                          200
+                        ]
+                      },
+                      "actions": {
+                        "Start_Acquisition_Workflow": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "@parameters('acquisitionArmRequestUrl')",
+                            "headers": {
+                              "Content-Type": "application/json"
+                            },
+                            "authentication": {
+                              "type": "ManagedServiceIdentity",
+                              "audience": "https://management.azure.com/"
+                            },
+                            "body": {
+                              "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                              "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                              "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))"
+                            }
+                          },
+                          "runAfter": {}
+                        },
+                        "Wait_For_Evidence_Acquisition": {
+                          "type": "Until",
+                          "expression": "@equals(body('Get_Acquisition_Status')?['status'], 'Completed')",
+                          "limit": {
+                            "count": 60,
+                            "timeout": "PT2H"
+                          },
+                          "actions": {
+                            "Get_Acquisition_Status": {
+                              "type": "Http",
+                              "inputs": {
+                                "method": "GET",
+                                "uri": "@concat(parameters('acquisitionStatusUrl'), '?incidentId=', encodeUriComponent(body('Parse_Incident')?['IncidentID']))",
+                                "authentication": {
+                                  "type": "ManagedServiceIdentity",
+                                  "audience": "https://management.azure.com/"
+                                }
+                              },
+                              "runAfter": {}
+                            },
+                            "Delay_Before_Retry": {
+                              "type": "Wait",
+                              "inputs": {
+                                "interval": {
+                                  "count": 30,
+                                  "unit": "Second"
+                                }
+                              },
+                              "runAfter": {
+                                "Get_Acquisition_Status": [
+                                  "Succeeded"
+                                ]
+                              }
+                            }
+                          },
+                          "runAfter": {
+                            "Start_Acquisition_Workflow": [
+                              "Succeeded"
+                            ]
+                          }
+                        },
+                        "Start_Analysis_Pipeline": {
+                          "type": "Http",
+                          "inputs": {
+                            "method": "POST",
+                            "uri": "@parameters('analysisPipelineUrl')",
+                            "headers": {
+                              "Content-Type": "application/json"
+                            },
+                            "body": {
+                              "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                              "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                              "IPAddress": "@body('Parse_Incident')?['IPAddress']",
+                              "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
+                              "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
+                              "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))",
+                              "ContainmentDetails": "@body('Call_Network_Containment')",
+                              "PipelineStatus": "AcquisitionCompleted",
+                              "Timestamp": "@{utcNow()}"
+                            }
+                          },
+                          "runAfter": {
+                            "Wait_For_Evidence_Acquisition": [
+                              "Succeeded"
+                            ]
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {
+                          "Record_Containment_Failure": {
+                            "type": "Compose",
+                            "inputs": {
+                              "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                              "Error": "Containment function returned non-200 status",
+                              "Details": "@body('Call_Network_Containment')",
+                              "Timestamp": "@{utcNow()}"
+                            },
+                            "runAfter": {}
+                          }
+                        }
+                      },
+                      "runAfter": {
+                        "Call_Network_Containment": [
+                          "Succeeded",
+                          "Failed"
+                        ]
+                      }
+                    }
+                  },
+                  "else": {
+                    "actions": {
+                      "Ignored_Non_Severe_Incident": {
+                        "type": "Compose",
+                        "inputs": "@concat('Incident ', body('Parse_Incident')?['IncidentID'], ' was not contained because its severity is neither High nor Critical.')",
+                        "runAfter": {}
+                      }
+                    }
+                  },
+                  "runAfter": {
+                    "Parse_Incident": [
+                      "Succeeded"
+                    ]
+                  }
+                }
+              },
+              "outputs": {}
+            },
+            "workflowDefinition": "[variables('$fxv#0')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Logic/workflows",
+              "apiVersion": "2019-05-01",
+              "name": "[parameters('logicAppName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "tags": "[union(parameters('tags'), createObject('Application', 'AACFP', 'Component', 'IncidentResponseOrchestrator'))]",
+              "properties": {
+                "state": "Enabled",
+                "definition": "[variables('workflowDefinition')]",
+                "parameters": {
+                  "containmentFunctionUrl": {
+                    "value": "[parameters('containmentFunctionUrl')]"
+                  },
+                  "acquisitionArmRequestUrl": {
+                    "value": "[parameters('acquisitionArmRequestUrl')]"
+                  },
+                  "acquisitionStatusUrl": {
+                    "value": "[parameters('acquisitionStatusUrl')]"
+                  },
+                  "analysisPipelineUrl": {
+                    "value": "[parameters('analysisPipelineUrl')]"
+                  },
+                  "evidenceBlobUriTemplate": {
+                    "value": "[parameters('evidenceBlobUriTemplate')]"
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "logicAppId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]"
+            },
+            "principalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Logic/workflows', parameters('logicAppName')), '2019-05-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function')]",
+        "[subscriptionResourceId('Microsoft.Resources/deployments', 'deploy-resource-groups')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "compromisedEnvironmentResourceGroupName": {
+      "type": "string",
+      "value": "[parameters('compromisedEnvironmentRgName')]"
+    },
+    "forensicEnclaveResourceGroupName": {
+      "type": "string",
+      "value": "[parameters('forensicEnclaveRgName')]"
+    },
+    "containmentFunctionAppId": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function'), '2025-04-01').outputs.functionAppId.value]"
+    },
+    "containmentFunctionPrincipalId": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function'), '2025-04-01').outputs.functionAppPrincipalId.value]"
+    },
+    "containmentFunctionUrl": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-containment-function'), '2025-04-01').outputs.containmentFunctionUrl.value]"
+    },
+    "logicAppId": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-logic-app'), '2025-04-01').outputs.logicAppId.value]"
+    },
+    "logicAppPrincipalId": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('forensicEnclaveRgName')), 'Microsoft.Resources/deployments', 'deploy-logic-app'), '2025-04-01').outputs.principalId.value]"
+    }
+  }
+}

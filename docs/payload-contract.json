@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Person1IncidentPayloadContract",
+  "description": "Standardized JSON payload contract ingested by Person 1 Logic App Orchestrator and passed to Network Containment Azure Function.",
+  "type": "object",
+  "required": [
+    "IncidentID",
+    "TargetVM",
+    "IPAddress",
+    "SubscriptionID",
+    "IncidentSeverity"
+  ],
+  "properties": {
+    "IncidentID": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for the security incident, used as Partition Key in Cosmos DB.",
+      "examples": ["INC-2026-0001"]
+    },
+    "TargetVM": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Compute/virtualMachines/[^/]+$",
+      "description": "Full Azure ARM Resource ID of the target virtual machine to isolate.",
+      "examples": ["/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/Compromised-Environment-RG/providers/Microsoft.Compute/virtualMachines/suspicious-vm-01"]
+    },
+    "IPAddress": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Public or private IP address associated with the compromised VM.",
+      "examples": ["203.0.113.25"]
+    },
+    "SubscriptionID": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Azure Subscription ID where the target VM resides.",
+      "examples": ["11111111-1111-1111-1111-111111111111"]
+    },
+    "IncidentSeverity": {
+      "type": "string",
+      "enum": ["Low", "Medium", "High", "Critical"],
+      "description": "Severity level of the alert. Network containment executes only when set to High or Critical.",
+      "examples": ["High"]
+    },
+    "ResourceGroupName": {
+      "type": "string",
+      "description": "Optional explicit Azure Resource Group name containing the target VM.",
+      "examples": ["Compromised-Environment-RG"]
+    }
+  },
+  "additionalProperties": false
+}
