@@ -246,7 +246,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan Image with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.30.0
         with:
           image-ref: dfir-sift-analyzer:${{ github.sha }}
           format: sarif
