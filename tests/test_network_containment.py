@@ -36,7 +36,6 @@ import azure.functions as func
 
 from src.functions.NetworkContainment import (
     ValidationError,
-    _create_isolation_nsg,
     _nsg_name,
     _parse_incident,
     _rule_payload,
