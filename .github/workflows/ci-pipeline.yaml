@@ -1,25 +1,30 @@
-name: REACT Pipeline
+name: REACT CI Pipeline
 
 on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
-# Cancel in-progress runs when a new commit is pushed to the PR
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
 
 jobs:
-  # ==========================================
-  # Path Detection Job (Runs First)
-  # ==========================================
+  # ============================================================================
+  # Change Detection & Path Filtering
+  # ============================================================================
   changes:
     name: Detect Changed Components
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
       infrastructure: ${{ steps.filter.outputs.infrastructure }}
       functions: ${{ steps.filter.outputs.functions }}
@@ -40,173 +45,293 @@ jobs:
               - 'src/logic-apps/**'
             functions:
               - 'src/functions/**'
+              - 'tests/**'
+              - 'pyproject.toml'
             containers:
               - 'src/containers/**'
             scripts:
               - 'src/scripts/**'
+              - 'iac/scripts/**'
 
-      - name: Summary of Code vs Non-Code Changes
+      - name: Change Summary
         run: |
           echo "=== Component Change Summary ==="
           echo "Infrastructure : ${{ steps.filter.outputs.infrastructure }}"
           echo "Functions      : ${{ steps.filter.outputs.functions }}"
           echo "Containers     : ${{ steps.filter.outputs.containers }}"
           echo "Scripts        : ${{ steps.filter.outputs.scripts }}"
-          
-          if [ "${{ steps.filter.outputs.infrastructure }}" != "true" ] && \
-             [ "${{ steps.filter.outputs.functions }}" != "true" ] && \
-             [ "${{ steps.filter.outputs.containers }}" != "true" ] && \
-             [ "${{ steps.filter.outputs.scripts }}" != "true" ]; then
-            echo "NOTICE: No application code modified (e.g. documentation, PR template, or metadata updated)."
-            echo "PR changes do not affect code. CI pipeline automatically passing."
+          echo "Has Code Changes: ${{ steps.filter.outputs.has_code_changes }}"
+
+  # ============================================================================
+  # Security & Secret Scanning (Runs on all code commits)
+  # ============================================================================
+  security-scan:
+    name: Security & Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Secret Scanner
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ""
+
+      - name: Set up Python for pip-audit
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run pip-audit for Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          if [ -f src/functions/requirements.txt ]; then
+            pip-audit -r src/functions/requirements.txt
           fi
 
-  # ==========================================
-  # Job 1: Infrastructure & Orchestration
-  # ==========================================
+  # ============================================================================
+  # Job 1: Infrastructure Validation & IaC Security
+  # ============================================================================
   verify-infrastructure:
-    name: verify-infrastructure
+    name: Verify Infrastructure (Bicep / ARM)
     needs: changes
-    if: needs.changes.outputs.infrastructure == 'true'
+    if: needs.changes.outputs.infrastructure == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Lint Bicep Files (Changed Only)
+      - name: Validate Bicep Templates with Azure CLI
         run: |
-          echo "Detecting changed Bicep/ARM files..."
-          CHANGED_IAC=$(git diff --name-only origin/main HEAD | grep -E '^iac/.*\.bicep$' || true)
-          if [ -n "$CHANGED_IAC" ]; then
-            echo "Running Bicep Linter on: $CHANGED_IAC"
-            # az bicep build --file ...
-          else
-            echo "No Bicep template modifications detected."
-          fi
-          echo "Infrastructure validation passed!"
+          echo "Validating all Bicep templates in iac/ directory..."
+          az bicep build --file iac/main.bicep
+          for bicep_file in iac/modules/*.bicep; do
+            if [ -f "$bicep_file" ]; then
+              echo "Validating module: $bicep_file"
+              az bicep build --file "$bicep_file"
+            fi
+          done
+          echo "All Bicep files validated successfully!"
 
-  # ==========================================
-  # Job 2: Python Functions & Scripts (Changed Code Only)
-  # ==========================================
-  test-python-functions:
-    name: test-python-functions
+      - name: Validate ARM and JSON Configurations
+        run: |
+          echo "Validating JSON schemas and structures..."
+          python3 -c "
+          import json, glob
+          for json_path in glob.glob('iac/**/*.json', recursive=True) + glob.glob('src/logic-apps/**/*.json', recursive=True):
+              with open(json_path) as f:
+                  json.load(f)
+              print(f'Valid JSON: {json_path}')
+          "
+
+      - name: Run Checkov IaC Security Scanner
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: iac/
+          framework: bicep,arm
+          soft_fail: true
+          output_format: cli,sarif
+          output_file_path: checkov-results.sarif
+
+  # ============================================================================
+  # Job 2: Python Linting & Code Quality Gate
+  # ============================================================================
+  lint-python:
+    name: Lint & Format Python Code
     needs: changes
-    if: needs.changes.outputs.functions == 'true'
+    if: needs.changes.outputs.functions == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code (Fetch Deep History for Diff)
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Linting Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff flake8
+
+      - name: Run Ruff Linter
+        run: ruff check src/functions tests
+
+      - name: Run Ruff Format Check
+        run: ruff format --check src/functions tests
+
+      - name: Run Flake8 Code Style Check
+        run: flake8 src/functions tests --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  # ============================================================================
+  # Job 3: Python Unit Tests & Coverage (Matrix)
+  # ============================================================================
+  test-python-functions:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    needs: [changes, lint-python]
+    if: needs.changes.outputs.functions == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: src/functions/requirements.txt
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov
-          if [ -f src/functions/requirements.txt ]; then pip install -r src/functions/requirements.txt; fi
-
-      - name: Lint Only Changed Python Files
-        run: |
-          CHANGED_PY=$(git diff --name-only origin/main HEAD | grep -E '^src/functions/.*\.py$' || true)
-          if [ -n "$CHANGED_PY" ]; then
-            echo "Linting modified Python files:"
-            echo "$CHANGED_PY"
-            flake8 $CHANGED_PY --count --select=E9,F63,F7,F82 --show-source --statistics
-          else
-            echo "No Python files modified to lint."
+          pip install pytest pytest-cov pytest-mock
+          if [ -f src/functions/requirements.txt ]; then
+            pip install -r src/functions/requirements.txt
           fi
 
-      - name: Run Unit Tests on Changed Components
+      - name: Run Pytest with Coverage
         run: |
-          export PYTHONPATH="${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src${PYTHONPATH:+:$PYTHONPATH}"
-          CHANGED_TESTS=$(git diff --name-only origin/main HEAD | grep -E '(^|/)(test_.*|.*_test)\.py$' || true)
-          if [ -n "$CHANGED_TESTS" ]; then
-            echo "Running Pytest on modified test modules:"
-            echo "$CHANGED_TESTS"
-            pytest $CHANGED_TESTS
-          else
-            TEST_FILES=$(find tests src/functions -type f \( -name 'test_*.py' -o -name '*_test.py' \) 2>/dev/null || true)
-            if [ -n "$TEST_FILES" ]; then
-              echo "No test files changed; running the available Python test suite:"
-              printf '%s\n' "$TEST_FILES"
-              pytest
-            else
-              echo "No pytest tests found under tests or src/functions; skipping tests."
-            fi
-          fi
-          echo "Python test step completed."
+          export PYTHONPATH="${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/src/functions"
+          pytest --junitxml=junit/test-results-${{ matrix.python-version }}.xml
 
-  # ==========================================
-  # Job 3: Docker Containers & Analysis
-  # ==========================================
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-python-${{ matrix.python-version }}
+          path: junit/test-results-${{ matrix.python-version }}.xml
+
+      - name: Upload Coverage Report
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-xml
+          path: coverage.xml
+
+  # ============================================================================
+  # Job 4: Container Build & Vulnerability Scan
+  # ============================================================================
   build-forensic-container:
-    name: build-forensic-container
+    name: Build Container & Vulnerability Scan
     needs: changes
-    if: needs.changes.outputs.containers == 'true'
+    if: needs.changes.outputs.containers == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build Docker Image
-        run: |
-          echo "Building forensic-analyzer image for modified container files..."
-          docker build -t dfir-sift-analyzer:latest ./src/containers/forensic-analyzer/
-          echo "Docker build successful!"
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/containers/forensic-analyzer
+          push: false
+          load: true
+          tags: dfir-sift-analyzer:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  # ==========================================
-  # Job 4: Automation & Forensics Scripts
-  # ==========================================
+      - name: Scan Image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: dfir-sift-analyzer:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Upload Trivy Scan Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container-analysis
+
+  # ============================================================================
+  # Job 5: Shell & Automation Scripts Verification
+  # ============================================================================
   verify-scripts:
-    name: verify-scripts
+    name: Verify Automation Scripts
     needs: changes
-    if: needs.changes.outputs.scripts == 'true'
+    if: needs.changes.outputs.scripts == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Check Shell Scripts Syntax
+      - name: Validate Shell Script Syntax
         run: |
-          CHANGED_SCRIPTS=$(git diff --name-only origin/main HEAD | grep -E '^src/scripts/.*\.sh$' || true)
-          if [ -n "$CHANGED_SCRIPTS" ]; then
-            echo "Checking syntax on modified shell scripts:"
-            echo "$CHANGED_SCRIPTS"
-            for script in $CHANGED_SCRIPTS; do
-              bash -n "$script"
+          echo "Checking shell script syntax across repository..."
+          shopt -s nullglob globstar
+          SH_FILES=(src/scripts/**/*.sh iac/scripts/**/*.sh)
+          if [ ${#SH_FILES[@]} -gt 0 ]; then
+            for script in "${SH_FILES[@]}"; do
+              if [ -f "$script" ]; then
+                echo "Validating: $script"
+                bash -n "$script"
+              fi
             done
+            echo "All shell scripts passed syntax check."
           else
-            echo "No modified bash scripts to validate."
+            echo "No shell scripts found to validate."
           fi
 
-  # ==========================================
+  # ============================================================================
   # Final Pipeline Status Gate
-  # ==========================================
+  # ============================================================================
   pipeline-result:
-    name: Pipeline Status Check
-    needs: [changes, verify-infrastructure, test-python-functions, build-forensic-container, verify-scripts]
+    name: Pipeline Status Gate
+    needs:
+      - changes
+      - security-scan
+      - verify-infrastructure
+      - lint-python
+      - test-python-functions
+      - build-forensic-container
+      - verify-scripts
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Verify Overall CI Status
+      - name: Evaluate CI Gate Results
         run: |
-          echo "=== Pipeline Final Evaluation ==="
+          echo "=========================================="
+          echo "      REACT CI PIPELINE STATUS GATE       "
+          echo "=========================================="
+          echo "Security Scan       : ${{ needs.security-scan.result }}"
+          echo "Verify Infrastructure: ${{ needs.verify-infrastructure.result }}"
+          echo "Lint Python         : ${{ needs.lint-python.result }}"
+          echo "Test Python Functions: ${{ needs.test-python-functions.result }}"
+          echo "Build Container     : ${{ needs.build-forensic-container.result }}"
+          echo "Verify Scripts      : ${{ needs.verify-scripts.result }}"
+          echo "=========================================="
           
-          # Check if any component test job failed
-          if [ "${{ needs.verify-infrastructure.result }}" == "failure" ] || \
-             [ "${{ needs.test-python-functions.result }}" == "failure" ] || \
-             [ "${{ needs.build-forensic-container.result }}" == "failure" ] || \
-             [ "${{ needs.verify-scripts.result }}" == "failure" ]; then
-            echo "ERROR: One or more code verification jobs failed."
-            exit 1
-          fi
-
-          echo "SUCCESS: All modified component tests passed, or non-code changes were made (documentation/meta). PR is clear to merge!"
-
+          RESULTS=(
+            "${{ needs.security-scan.result }}"
+            "${{ needs.verify-infrastructure.result }}"
+            "${{ needs.lint-python.result }}"
+            "${{ needs.test-python-functions.result }}"
+            "${{ needs.build-forensic-container.result }}"
+            "${{ needs.verify-scripts.result }}"
+          )
+          
+          for res in "${RESULTS[@]}"; do
+            if [ "$res" == "failure" ] || [ "$res" == "cancelled" ]; then
+              echo "GATE STATUS: FAILED (One or more required jobs failed or were cancelled)"
+              exit 1
+            fi
+          done
+          
+          echo "GATE STATUS: PASSED - All verified jobs succeeded or were cleanly skipped on non-code changes."
