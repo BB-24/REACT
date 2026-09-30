@@ -19,7 +19,6 @@ import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.network import NetworkManagementClient
 
-
 LOGGER = logging.getLogger(__name__)
 _REQUIRED_FIELDS = {"IncidentID", "TargetVM", "IPAddress", "SubscriptionID", "IncidentSeverity"}
 _RESOURCE_ID_PATTERN = re.compile(
@@ -58,11 +57,15 @@ def _parse_incident(req: func.HttpRequest) -> Incident:
     if not all(isinstance(value, str) and value.strip() for value in values.values()):
         raise ValidationError("All payload contract fields must be non-empty strings.")
     if values["IncidentSeverity"] not in ("High", "Critical"):
-        raise ValidationError("Network containment only accepts IncidentSeverity 'High' or 'Critical'.")
+        raise ValidationError(
+            "Network containment only accepts IncidentSeverity 'High' or 'Critical'."
+        )
 
     match = _RESOURCE_ID_PATTERN.fullmatch(values["TargetVM"].rstrip("/"))
     if not match:
-        raise ValidationError("TargetVM must be a full Microsoft.Compute/virtualMachines resource ID.")
+        raise ValidationError(
+            "TargetVM must be a full Microsoft.Compute/virtualMachines resource ID."
+        )
     if match.group("subscription").lower() != values["SubscriptionID"].lower():
         raise ValidationError("SubscriptionID does not match the subscription in TargetVM.")
 
@@ -105,7 +108,9 @@ def _private_endpoint_prefixes() -> list[str]:
     return [prefix.strip() for prefix in raw_prefixes.split(",") if prefix.strip()]
 
 
-def _rule_payload(name: str, priority: int, direction: str, access: str, destination: str) -> dict[str, Any]:
+def _rule_payload(
+    name: str, priority: int, direction: str, access: str, destination: str
+) -> dict[str, Any]:
     return {
         "name": name,
         "priority": priority,
@@ -119,7 +124,9 @@ def _rule_payload(name: str, priority: int, direction: str, access: str, destina
     }
 
 
-def _create_isolation_nsg(client: NetworkManagementClient, resource_group: str, incident_id: str) -> str:
+def _create_isolation_nsg(
+    client: NetworkManagementClient, resource_group: str, incident_id: str
+) -> str:
     nsg_name = _nsg_name(incident_id)
     region = os.getenv("REGION_NAME", os.getenv("AZURE_REGION", "eastus"))
     client.network_security_groups.begin_create_or_update(
@@ -128,7 +135,6 @@ def _create_isolation_nsg(client: NetworkManagementClient, resource_group: str, 
         {"location": region, "tags": {"Purpose": "ForensicIsolation", "IncidentID": incident_id}},
     ).result()
 
-
     # Lower numbers are evaluated first: permit only evidence-upload traffic
     # before denying all other egress. The Storage service tag supports Azure
     # Storage service endpoints; explicit prefixes support Private Endpoints.
@@ -136,7 +142,11 @@ def _create_isolation_nsg(client: NetworkManagementClient, resource_group: str, 
     for offset, prefix in enumerate(_private_endpoint_prefixes(), start=101):
         if offset > 199:
             raise ValidationError("At most 99 evidence private endpoint prefixes are supported.")
-        rules.append(_rule_payload(f"Allow-Evidence-PrivateLink-{offset}", offset, "Outbound", "Allow", prefix))
+        rules.append(
+            _rule_payload(
+                f"Allow-Evidence-PrivateLink-{offset}", offset, "Outbound", "Allow", prefix
+            )
+        )
     rules.extend(
         [
             _rule_payload("Deny-All-Inbound", 4095, "Inbound", "Deny", "*"),
@@ -144,7 +154,9 @@ def _create_isolation_nsg(client: NetworkManagementClient, resource_group: str, 
         ]
     )
     for rule in rules:
-        client.security_rules.begin_create_or_update(resource_group, nsg_name, rule["name"], rule).result()
+        client.security_rules.begin_create_or_update(
+            resource_group, nsg_name, rule["name"], rule
+        ).result()
     return nsg_name
 
 
@@ -162,7 +174,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     """Create an isolation NSG, then attach it to the target VM's primary NIC."""
     try:
         incident = _parse_incident(req)
-        _, vm_resource_group, vm_name = _resource_parts(incident.target_vm, "providers/Microsoft.Compute/virtualMachines")
+        _, vm_resource_group, vm_name = _resource_parts(
+            incident.target_vm, "providers/Microsoft.Compute/virtualMachines"
+        )
         credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
         network_client = NetworkManagementClient(credential, incident.subscription_id)
 
@@ -174,32 +188,61 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         compute_client = ComputeManagementClient(credential, incident.subscription_id)
         vm = compute_client.virtual_machines.get(vm_resource_group, vm_name)
         nic_id = _primary_nic_id(vm)
-        _, nic_resource_group, nic_name = _resource_parts(nic_id, "providers/Microsoft.Network/networkInterfaces")
+        _, nic_resource_group, nic_name = _resource_parts(
+            nic_id, "providers/Microsoft.Network/networkInterfaces"
+        )
 
         nsg_name = _create_isolation_nsg(network_client, nic_resource_group, incident.incident_id)
         nic = network_client.network_interfaces.get(nic_resource_group, nic_name)
         previous_nsg_id = nic.network_security_group.id if nic.network_security_group else None
-        nic.network_security_group = {"id": network_client.network_security_groups.get(nic_resource_group, nsg_name).id}
-        network_client.network_interfaces.begin_create_or_update(nic_resource_group, nic_name, nic).result()
+        nic.network_security_group = {
+            "id": network_client.network_security_groups.get(nic_resource_group, nsg_name).id
+        }
+        network_client.network_interfaces.begin_create_or_update(
+            nic_resource_group, nic_name, nic
+        ).result()
 
-        LOGGER.warning("Incident %s: attached isolation NSG %s to NIC %s", incident.incident_id, nsg_name, nic_name)
+        LOGGER.warning(
+            "Incident %s: attached isolation NSG %s to NIC %s",
+            incident.incident_id,
+            nsg_name,
+            nic_name,
+        )
         return func.HttpResponse(
-            json.dumps({
-                "status": "Contained",
-                "IncidentID": incident.incident_id,
-                "TargetVM": incident.target_vm,
-                "NetworkInterface": nic_id,
-                "IsolationNSG": nsg_name,
-                "PreviousNSGId": previous_nsg_id,
-            }),
+            json.dumps(
+                {
+                    "status": "Contained",
+                    "IncidentID": incident.incident_id,
+                    "TargetVM": incident.target_vm,
+                    "NetworkInterface": nic_id,
+                    "IsolationNSG": nsg_name,
+                    "PreviousNSGId": previous_nsg_id,
+                }
+            ),
             status_code=200,
             mimetype="application/json",
         )
     except ValidationError as exc:
-        return func.HttpResponse(json.dumps({"status": "Rejected", "error": str(exc)}), status_code=400, mimetype="application/json")
+        return func.HttpResponse(
+            json.dumps({"status": "Rejected", "error": str(exc)}),
+            status_code=400,
+            mimetype="application/json",
+        )
     except KeyError as exc:
         LOGGER.exception("Containment function configuration is incomplete.")
-        return func.HttpResponse(json.dumps({"status": "Failed", "error": f"Missing application setting: {exc.args[0]}"}), status_code=500, mimetype="application/json")
+        return func.HttpResponse(
+            json.dumps(
+                {"status": "Failed", "error": f"Missing application setting: {exc.args[0]}"}
+            ),
+            status_code=500,
+            mimetype="application/json",
+        )
     except Exception:  # Azure SDK errors are deliberately not exposed to callers.
         LOGGER.exception("Network containment failed.")
-        return func.HttpResponse(json.dumps({"status": "Failed", "error": "Network containment could not be completed."}), status_code=500, mimetype="application/json")
+        return func.HttpResponse(
+            json.dumps(
+                {"status": "Failed", "error": "Network containment could not be completed."}
+            ),
+            status_code=500,
+            mimetype="application/json",
+        )
