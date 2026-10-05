@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 env/
+scripts/
 
 # Azure Functions local settings (CRITICAL: Prevents leaking local connection strings)
 local.settings.json
