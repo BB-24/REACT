@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # Build Stage: Install build dependencies and compile python wheels
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -32,7 +32,7 @@ RUN pip install --prefix=/install --no-warn-script-location \
     azure-identity
 
 # Final Runtime Stage
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 LABEL maintainer="REACT DFIR Team" \
       description="Forensic artifact analyzer and memory triage container" \
