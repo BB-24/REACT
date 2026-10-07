@@ -18,3 +18,5 @@ Thumbs.db
 .terraform/
 *.tfstate
 *.tfstate.backup
+# Node.js dependencies
+node_modules/
