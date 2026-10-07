@@ -1,0 +1,44 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+
+    "_comment_mock": "REACT_MOCK_MODE=true runs the whole pipeline against the simulated estate in shared/mocks -- no Azure subscription, no credentials, no cost. Set it to false once the resources from iac/main.bicep exist and fill in the real values below.",
+    "REACT_MOCK_MODE": "true",
+
+    "EVIDENCE_STORAGE_ACCOUNT": "reactenclave01",
+    "EVIDENCE_CONTAINER": "evidence",
+    "TOOLS_CONTAINER": "tools",
+    "STORAGE_ENDPOINT_SUFFIX": "core.windows.net",
+
+    "_comment_sas": "user-delegation needs no storage account key at all. key-vault is the fallback for accounts still on shared-key auth (REQ-3.3.3).",
+    "SAS_MODE": "user-delegation",
+    "SAS_TTL_MINUTES": "60",
+    "KEY_VAULT_URI": "https://react-kv.vault.azure.net/",
+    "STORAGE_KEY_SECRET_NAME": "evidence-storage-key",
+
+    "_comment_target": "The subscription and resource group holding the VMs under investigation.",
+    "AZURE_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000001",
+    "TARGET_RESOURCE_GROUP": "rg-victims",
+
+    "_comment_enclave": "The forensic enclave, deliberately in a different subscription (REQ-3.4.3).",
+    "FORENSIC_SUBSCRIPTION_ID": "00000000-0000-0000-0000-0000000000e1",
+    "FORENSIC_RESOURCE_GROUP": "rg-forensic-enclave",
+    "FORENSIC_LOCATION": "eastus",
+
+    "SQL_CONNECTION_STRING": "Driver={ODBC Driver 18 for SQL Server};Server=tcp:react-sql.database.windows.net,1433;Database=reactdfir;Authentication=ActiveDirectoryMsi;Encrypt=yes;",
+    "LEDGER_TABLE": "dbo.EvidenceLedger",
+
+    "LOGIC_APP_PRINCIPAL_ID": "11111111-2222-3333-4444-555555555555",
+    "HASH_CHUNK_BYTES": "8388608",
+    "EVIDENCE_STORAGE_SERVICE_TAG": "Storage.eastus",
+    "ACQUISITION_TIMEOUT_SECONDS": "5400",
+
+    "_comment_tools": "Blob names inside the tool repository container (REQ-3.3.2).",
+    "WINPMEM_BLOB_NAME": "winpmem.exe",
+    "AVML_BLOB_NAME": "avml",
+    "WINDOWS_SCRIPT_BLOB_NAME": "Acquire-Memory.ps1",
+    "LINUX_SCRIPT_BLOB_NAME": "acquire-memory.sh"
+  }
+}
