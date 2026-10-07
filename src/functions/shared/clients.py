@@ -12,6 +12,7 @@ imported, and each factory below returns the genuine client with a
 Mock mode is off by default. A missing setting in production must fail closed
 towards real Azure, never silently towards fabricated evidence.
 """
+
 import logging
 
 from . import config
@@ -32,7 +33,8 @@ def mock_mode():
         logging.warning(
             "REACT is running in MOCK MODE. No Azure resource is being touched "
             "and every artifact produced is synthetic. Set %s=false to use real "
-            "Azure services.", MOCK_SETTING,
+            "Azure services.",
+            MOCK_SETTING,
         )
         _warned = True
     return enabled
@@ -58,9 +60,7 @@ def compute_client(subscription_id, cred=None):
     if mock_mode():
         from . import mocks
 
-        return mocks.MockComputeManagementClient(
-            cred or credential(), subscription_id
-        )
+        return mocks.MockComputeManagementClient(cred or credential(), subscription_id)
     from azure.mgmt.compute import ComputeManagementClient
 
     return ComputeManagementClient(cred or credential(), subscription_id)
@@ -71,9 +71,7 @@ def network_client(subscription_id, cred=None):
     if mock_mode():
         from . import mocks
 
-        return mocks.MockNetworkManagementClient(
-            cred or credential(), subscription_id
-        )
+        return mocks.MockNetworkManagementClient(cred or credential(), subscription_id)
     from azure.mgmt.network import NetworkManagementClient
 
     return NetworkManagementClient(cred or credential(), subscription_id)
@@ -95,9 +93,7 @@ def blob_client_from_url(blob_url, cred=None, max_chunk_get_size=None):
     if mock_mode():
         from . import mocks
 
-        return mocks.MockBlobClient.from_blob_url(
-            blob_url, max_chunk_get_size=max_chunk_get_size
-        )
+        return mocks.MockBlobClient.from_blob_url(blob_url, max_chunk_get_size=max_chunk_get_size)
     from azure.storage.blob import BlobClient
 
     return BlobClient.from_blob_url(
@@ -116,9 +112,7 @@ def blob_client(account_url, container, blob_name, cred=None):
         return mocks.MockBlobClient(account, container, blob_name)
     from azure.storage.blob import BlobClient
 
-    return BlobClient(
-        account_url, container, blob_name, credential=cred or credential()
-    )
+    return BlobClient(account_url, container, blob_name, credential=cred or credential())
 
 
 def secret_client(vault_uri, cred=None):

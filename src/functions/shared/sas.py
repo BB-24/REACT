@@ -21,8 +21,9 @@ Two minting modes are supported, selected by the ``SAS_MODE`` app setting:
     Key Vault and sign with it. Kept for environments where the enclave storage
     account has not been moved off shared-key auth yet.
 """
+
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 
@@ -45,7 +46,7 @@ def account_url(account=None):
     """Return the blob service endpoint for the evidence storage account."""
     account = account or config.require("EVIDENCE_STORAGE_ACCOUNT")
     suffix = config.get("STORAGE_ENDPOINT_SUFFIX", "core.windows.net")
-    return "https://{0}.blob.{1}".format(account, suffix)
+    return f"https://{account}.blob.{suffix}"
 
 
 def slug(value):
@@ -54,18 +55,15 @@ def slug(value):
     return cleaned or "unknown"
 
 
-def build_blob_name(incident_id, target_name, artifact="memory", extension="raw",
-                    now=None):
+def build_blob_name(incident_id, target_name, artifact="memory", extension="raw", now=None):
     """Return the enclave blob path for one acquired artifact.
 
     Layout is ``<incident>/<host>/<artifact>-<utc timestamp>.<ext>`` so that a
     single incident's evidence stays contiguous and a re-run never silently
     overwrites an earlier image.
     """
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-    return "{0}/{1}/{2}-{3}.{4}".format(
-        slug(incident_id), slug(target_name), slug(artifact), stamp, extension
-    )
+    stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    return f"{slug(incident_id)}/{slug(target_name)}/{slug(artifact)}-{stamp}.{extension}"
 
 
 def _account_key_from_key_vault(credential=None):
@@ -75,13 +73,12 @@ def _account_key_from_key_vault(credential=None):
     return client.get_secret(secret_name).value
 
 
-def _mint(blob_name, permission, ttl_minutes, account, container, credential,
-          now):
+def _mint(blob_name, permission, ttl_minutes, account, container, credential, now):
     """Sign one blob-scoped SAS. Returns ``(url_with_sas, expires_on)``."""
     account = account or config.require("EVIDENCE_STORAGE_ACCOUNT")
     ttl = ttl_minutes or config.get_int("SAS_TTL_MINUTES", DEFAULT_TTL_MINUTES)
 
-    issued_at = now or datetime.now(timezone.utc)
+    issued_at = now or datetime.now(UTC)
     start = issued_at - timedelta(minutes=CLOCK_SKEW_MINUTES)
     expiry = issued_at + timedelta(minutes=ttl)
 
@@ -103,23 +100,19 @@ def _mint(blob_name, permission, ttl_minutes, account, container, credential,
         )
         token = generate_blob_sas(user_delegation_key=delegation_key, **sas_args)
     elif mode == "key-vault":
-        token = generate_blob_sas(
-            account_key=_account_key_from_key_vault(credential), **sas_args
-        )
+        token = generate_blob_sas(account_key=_account_key_from_key_vault(credential), **sas_args)
     else:
         raise config.ConfigError(
-            "SAS_MODE must be 'user-delegation' or 'key-vault', got "
-            "'{0}'.".format(mode)
+            f"SAS_MODE must be 'user-delegation' or 'key-vault', got '{mode}'."
         )
 
-    url = "{0}/{1}/{2}?{3}".format(
-        account_url(account), container, blob_name, token
-    )
+    url = f"{account_url(account)}/{container}/{blob_name}?{token}"
     return url, expiry
 
 
-def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=None,
-                        credential=None, now=None):
+def mint_write_only_sas(
+    blob_name, ttl_minutes=None, account=None, container=None, credential=None, now=None
+):
     """Mint a write-only blob SAS and return ``(url_with_sas, expires_on)``.
 
     REQ-3.3.3. The returned URL embeds the token. Treat it as a secret: hand it
@@ -138,8 +131,9 @@ def mint_write_only_sas(blob_name, ttl_minutes=None, account=None, container=Non
     )
 
 
-def mint_read_only_sas(blob_name, ttl_minutes=None, account=None, container=None,
-                       credential=None, now=None):
+def mint_read_only_sas(
+    blob_name, ttl_minutes=None, account=None, container=None, credential=None, now=None
+):
     """Mint a read-only SAS for one blob in the tool repository (REQ-3.3.2).
 
     The acquisition binaries are fetched by the target host, so this token is

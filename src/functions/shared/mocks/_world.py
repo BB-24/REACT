@@ -12,10 +12,11 @@ State is held in memory and never persisted. A restart therefore gives a clean,
 reproducible estate, which is what lets the same fabric back both the demo and
 the unit tests.
 """
+
 import hashlib
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Two subscriptions, because REQ-3.4.3 is specifically about crossing the
 # boundary between them: the attacker may hold Contributor on the first.
@@ -43,10 +44,10 @@ _LOCK = threading.RLock()
 
 
 def utcnow():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-class Model(object):
+class Model:
     """Attribute bag standing in for an ``azure-mgmt`` model object.
 
     The production code only ever reads attributes off these models, and reads
@@ -59,16 +60,11 @@ class Model(object):
             setattr(self, key, value)
 
     def as_dict(self):
-        return {
-            key: value for key, value in vars(self).items()
-            if not key.startswith("_")
-        }
+        return {key: value for key, value in vars(self).items() if not key.startswith("_")}
 
     def __repr__(self):
-        body = ", ".join(
-            "{0}={1!r}".format(key, value) for key, value in sorted(vars(self).items())
-        )
-        return "Model({0})".format(body)
+        body = ", ".join(f"{key}={value!r}" for key, value in sorted(vars(self).items()))
+        return f"Model({body})"
 
 
 class MockAzureError(RuntimeError):
@@ -83,27 +79,19 @@ class ImmutabilityError(MockAzureError):
 
 
 def _resource_id(subscription, resource_group, provider, kind, name):
-    return "/subscriptions/{0}/resourceGroups/{1}/providers/{2}/{3}/{4}".format(
-        subscription, resource_group, provider, kind, name
-    )
+    return f"/subscriptions/{subscription}/resourceGroups/{resource_group}/providers/{provider}/{kind}/{name}"
 
 
 def vm_id(subscription, resource_group, name):
-    return _resource_id(
-        subscription, resource_group, "Microsoft.Compute", "virtualMachines", name
-    )
+    return _resource_id(subscription, resource_group, "Microsoft.Compute", "virtualMachines", name)
 
 
 def disk_id(subscription, resource_group, name):
-    return _resource_id(
-        subscription, resource_group, "Microsoft.Compute", "disks", name
-    )
+    return _resource_id(subscription, resource_group, "Microsoft.Compute", "disks", name)
 
 
 def snapshot_id(subscription, resource_group, name):
-    return _resource_id(
-        subscription, resource_group, "Microsoft.Compute", "snapshots", name
-    )
+    return _resource_id(subscription, resource_group, "Microsoft.Compute", "snapshots", name)
 
 
 def nic_id(subscription, resource_group, name):
@@ -114,19 +102,29 @@ def nic_id(subscription, resource_group, name):
 
 def nsg_id(subscription, resource_group, name):
     return _resource_id(
-        subscription, resource_group, "Microsoft.Network",
-        "networkSecurityGroups", name,
+        subscription,
+        resource_group,
+        "Microsoft.Network",
+        "networkSecurityGroups",
+        name,
     )
 
 
 # --- Storage -----------------------------------------------------------------
 
 
-class MockContainer(object):
+class MockContainer:
     """A blob container, including the immutability posture REQ-3.5.1 demands."""
 
-    def __init__(self, account, name, legal_hold=False, legal_hold_tags=None,
-                 retention_days=None, policy_locked=False):
+    def __init__(
+        self,
+        account,
+        name,
+        legal_hold=False,
+        legal_hold_tags=None,
+        retention_days=None,
+        policy_locked=False,
+    ):
         self.account = account
         self.name = name
         self.legal_hold = legal_hold
@@ -140,23 +138,19 @@ class MockContainer(object):
         image with a doctored one to defeat the hash ledger."""
         if self.legal_hold:
             raise ImmutabilityError(
-                "Blob '{0}' is under legal hold ({1}); overwrite and delete are "
-                "blocked until the hold is cleared.".format(
-                    blob_name, ", ".join(self.legal_hold_tags) or "untagged"
-                )
+                f"Blob '{blob_name}' is under legal hold "
+                f"({', '.join(self.legal_hold_tags) or 'untagged'}); overwrite "
+                "and delete are blocked until the hold is cleared."
             )
         if self.retention_days:
             raise ImmutabilityError(
-                "Blob '{0}' is inside a {1}-day time-based retention policy; "
-                "overwrite and delete are blocked.".format(
-                    blob_name, self.retention_days
-                )
+                f"Blob '{blob_name}' is inside a {self.retention_days}-day time-based retention policy; "
+                "overwrite and delete are blocked."
             )
 
 
-class MockBlob(object):
-    def __init__(self, account, container, name, data, metadata=None,
-                 creation_time=None):
+class MockBlob:
+    def __init__(self, account, container, name, data, metadata=None, creation_time=None):
         self.account = account
         self.container = container
         self.name = name
@@ -170,9 +164,7 @@ class MockBlob(object):
 
     @property
     def url(self):
-        return "https://{0}.blob.core.windows.net/{1}/{2}".format(
-            self.account, self.container, self.name
-        )
+        return f"https://{self.account}.blob.core.windows.net/{self.container}/{self.name}"
 
     def sha256(self):
         return hashlib.sha256(self.data).hexdigest()
@@ -181,7 +173,7 @@ class MockBlob(object):
 # --- The estate --------------------------------------------------------------
 
 
-class World(object):
+class World:
     """Every simulated resource, plus the Event Grid queue and the ledger."""
 
     def __init__(self):
@@ -208,12 +200,10 @@ class World(object):
     def container(self, account, name):
         try:
             return self.containers[(account, name)]
-        except KeyError:
+        except KeyError as err:
             raise MockAzureError(
-                "Container '{0}' does not exist on account '{1}'.".format(
-                    name, account
-                )
-            )
+                f"Container '{name}' does not exist on account '{account}'."
+            ) from err
 
     def put_blob(self, account, container, name, data, metadata=None):
         """Store a blob and queue the ``BlobCreated`` event it would raise."""
@@ -230,10 +220,8 @@ class World(object):
     def get_blob(self, account, container, name):
         try:
             return self.blobs[(account, container, name)]
-        except KeyError:
-            raise MockAzureError(
-                "Blob '{0}' not found in {1}/{2}.".format(name, account, container)
-            )
+        except KeyError as err:
+            raise MockAzureError(f"Blob '{name}' not found in {account}/{container}.") from err
 
     def delete_blob(self, account, container, name):
         with _LOCK:
@@ -247,14 +235,10 @@ class World(object):
                 (blob.url + blob.creation_time.isoformat()).encode("utf-8")
             ).hexdigest(),
             "topic": (
-                "/subscriptions/{0}/resourceGroups/{1}/providers"
-                "/Microsoft.Storage/storageAccounts/{2}".format(
-                    ENCLAVE_SUBSCRIPTION, ENCLAVE_RESOURCE_GROUP, blob.account
-                )
+                f"/subscriptions/{ENCLAVE_SUBSCRIPTION}/resourceGroups/{ENCLAVE_RESOURCE_GROUP}/providers"
+                f"/Microsoft.Storage/storageAccounts/{blob.account}"
             ),
-            "subject": "/blobServices/default/containers/{0}/blobs/{1}".format(
-                blob.container, blob.name
-            ),
+            "subject": f"/blobServices/default/containers/{blob.container}/blobs/{blob.name}",
             "eventType": "Microsoft.Storage.BlobCreated",
             "eventTime": blob.creation_time.isoformat(),
             "dataVersion": "1.0",
@@ -291,10 +275,7 @@ class World(object):
         """Append one row, extending the hash chain that stands in for the
         Azure SQL Ledger digest."""
         with _LOCK:
-            previous = (
-                self.ledger_rows[-1]["_LedgerDigest"]
-                if self.ledger_rows else "0" * 64
-            )
+            previous = self.ledger_rows[-1]["_LedgerDigest"] if self.ledger_rows else "0" * 64
             payload = json.dumps(row, sort_keys=True, default=str)
             stored = dict(row)
             stored["LedgerEntryId"] = len(self.ledger_rows) + 1
@@ -310,12 +291,12 @@ class World(object):
         previous = "0" * 64
         for row in self.ledger_rows:
             payload = {
-                key: value for key, value in row.items()
+                key: value
+                for key, value in row.items()
                 if key not in ("LedgerEntryId", "_PreviousDigest", "_LedgerDigest")
             }
             expected = hashlib.sha256(
-                (previous + json.dumps(payload, sort_keys=True, default=str))
-                .encode("utf-8")
+                (previous + json.dumps(payload, sort_keys=True, default=str)).encode("utf-8")
             ).hexdigest()
             if expected != row["_LedgerDigest"]:
                 return False, row["LedgerEntryId"]
@@ -330,7 +311,7 @@ def _add_vm(world, name, os_type, data_disk_count=0, attached_nsg_name=None):
     subscription = COMPROMISED_SUBSCRIPTION
     group = TARGET_RESOURCE_GROUP
 
-    os_disk_name = "{0}-osdisk".format(name)
+    os_disk_name = f"{name}-osdisk"
     world.disks[disk_id(subscription, group, os_disk_name).lower()] = Model(
         id=disk_id(subscription, group, os_disk_name),
         name=os_disk_name,
@@ -342,7 +323,7 @@ def _add_vm(world, name, os_type, data_disk_count=0, attached_nsg_name=None):
 
     data_disk_refs = []
     for index in range(1, data_disk_count + 1):
-        data_name = "{0}-data-{1:02d}".format(name, index)
+        data_name = f"{name}-data-{index:02d}"
         world.disks[disk_id(subscription, group, data_name).lower()] = Model(
             id=disk_id(subscription, group, data_name),
             name=data_name,
@@ -359,7 +340,7 @@ def _add_vm(world, name, os_type, data_disk_count=0, attached_nsg_name=None):
             )
         )
 
-    interface_name = "{0}-nic".format(name)
+    interface_name = f"{name}-nic"
     existing_nsg = None
     if attached_nsg_name:
         existing_nsg = Model(id=nsg_id(subscription, group, attached_nsg_name))
@@ -391,9 +372,7 @@ def _add_vm(world, name, os_type, data_disk_count=0, attached_nsg_name=None):
             data_disks=data_disk_refs,
         ),
         network_profile=Model(
-            network_interfaces=[
-                Model(id=nic_id(subscription, group, interface_name), primary=True)
-            ]
+            network_interfaces=[Model(id=nic_id(subscription, group, interface_name), primary=True)]
         ),
     )
 
@@ -401,10 +380,8 @@ def _add_vm(world, name, os_type, data_disk_count=0, attached_nsg_name=None):
 def seed(world):
     """Populate a plausible two-subscription estate."""
     # The compromised production subscription.
-    _add_vm(world, "web-01", "Windows", data_disk_count=1,
-            attached_nsg_name="nsg-web-tier")
-    _add_vm(world, "db-02", "Linux", data_disk_count=2,
-            attached_nsg_name="nsg-db-tier")
+    _add_vm(world, "web-01", "Windows", data_disk_count=1, attached_nsg_name="nsg-web-tier")
+    _add_vm(world, "db-02", "Linux", data_disk_count=2, attached_nsg_name="nsg-db-tier")
 
     # The forensic enclave, in its own subscription.
     world.containers[(EVIDENCE_ACCOUNT, EVIDENCE_CONTAINER)] = MockContainer(
@@ -424,7 +401,9 @@ def seed(world):
         # Written straight into the dict rather than through put_blob: the tool
         # repository is not evidence and must not reach the custody ledger.
         world.blobs[(EVIDENCE_ACCOUNT, TOOLS_CONTAINER, tool)] = MockBlob(
-            EVIDENCE_ACCOUNT, TOOLS_CONTAINER, tool,
+            EVIDENCE_ACCOUNT,
+            TOOLS_CONTAINER,
+            tool,
             b"MOCK ACQUISITION TOOL PAYLOAD -- " + tool.encode("ascii"),
         )
 

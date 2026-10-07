@@ -8,6 +8,7 @@ never imports this package and every call goes to the real SDK. No production
 module imports anything from here directly, which is what keeps that switch a
 one-line change rather than a refactor.
 """
+
 from ._compute import (
     DEFAULT_IMAGE_BYTES,
     MockComputeManagementClient,
@@ -16,7 +17,8 @@ from ._compute import (
 )
 from ._keyvault import MockSecretClient
 from ._network import MockNetworkManagementClient
-from ._sql import MockSqlConnection, connect as sql_connect
+from ._sql import MockSqlConnection
+from ._sql import connect as sql_connect
 from ._storage import MockBlobClient, MockBlobServiceClient
 from ._world import (
     COMPROMISED_SUBSCRIPTION,
@@ -39,7 +41,7 @@ from ._world import (
 )
 
 
-class MockCredential(object):
+class MockCredential:
     """Stand-in for ``DefaultAzureCredential``.
 
     Never contacted: every mock client ignores the credential it is handed. It
@@ -96,9 +98,7 @@ def snapshot_state():
                 "retentionDays": holder.retention_days,
                 "policyLocked": holder.policy_locked,
             }
-            for holder in sorted(
-                estate.containers.values(), key=lambda c: (c.account, c.name)
-            )
+            for holder in sorted(estate.containers.values(), key=lambda c: (c.account, c.name))
         ],
         "blobs": [
             {
@@ -107,9 +107,7 @@ def snapshot_state():
                 "sizeBytes": blob.size,
                 "metadata": blob.metadata,
             }
-            for blob in sorted(
-                estate.blobs.values(), key=lambda b: (b.container, b.name)
-            )
+            for blob in sorted(estate.blobs.values(), key=lambda b: (b.container, b.name))
         ],
         "runCommands": list(estate.run_commands),
         "pendingEvents": len(estate.events),

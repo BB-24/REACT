@@ -3,12 +3,12 @@
 The SAS is generated with a throwaway account key so the token can be parsed
 and asserted on without contacting Azure.
 """
+
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
 import pytest
-
 from shared import config, sas
 
 FAKE_ACCOUNT_KEY = base64.b64encode(b"react-test-key-material-0123456789").decode()
@@ -32,19 +32,19 @@ def _token(url):
 
 
 def test_blob_name_layout_groups_by_incident_and_host():
-    now = datetime(2024, 5, 1, 12, 30, 0, tzinfo=timezone.utc)
+    now = datetime(2024, 5, 1, 12, 30, 0, tzinfo=UTC)
     name = sas.build_blob_name("INC-2024-0042", "web-01", now=now)
     assert name == "INC-2024-0042/web-01/memory-20240501T123000Z.raw"
 
 
 def test_blob_name_sanitises_path_traversal():
-    name = sas.build_blob_name("../../etc", "a/b", now=datetime.now(timezone.utc))
+    name = sas.build_blob_name("../../etc", "a/b", now=datetime.now(UTC))
     assert ".." not in name
     assert name.count("/") == 2
 
 
 def test_blob_names_do_not_collide_across_runs():
-    early = datetime(2024, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    early = datetime(2024, 5, 1, 12, 0, 0, tzinfo=UTC)
     later = early + timedelta(seconds=1)
     assert sas.build_blob_name("INC-1", "web-01", now=early) != sas.build_blob_name(
         "INC-1", "web-01", now=later
@@ -65,20 +65,20 @@ def test_token_is_write_only():
 
 
 def test_default_ttl_is_sixty_minutes():
-    now = datetime(2024, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2024, 5, 1, 12, 0, 0, tzinfo=UTC)
     _url, expiry = sas.mint_write_only_sas("INC-1/mem.raw", now=now)
     assert expiry - now == timedelta(minutes=60)
 
 
 def test_ttl_is_configurable(monkeypatch):
     monkeypatch.setenv("SAS_TTL_MINUTES", "15")
-    now = datetime(2024, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2024, 5, 1, 12, 0, 0, tzinfo=UTC)
     _url, expiry = sas.mint_write_only_sas("INC-1/mem.raw", now=now)
     assert expiry - now == timedelta(minutes=15)
 
 
 def test_start_time_is_backdated_for_clock_skew():
-    now = datetime(2024, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2024, 5, 1, 12, 0, 0, tzinfo=UTC)
     url, _expiry = sas.mint_write_only_sas("INC-1/mem.raw", now=now)
     start = _token(url)["st"][0]
     assert start.startswith("2024-05-01T11:55")
