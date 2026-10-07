@@ -19,7 +19,7 @@ fail_under = 70
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 exclude = [
     ".git",
     "__pycache__",
@@ -40,6 +40,7 @@ select = [
 ]
 ignore = [
     "E501", # line length handled by formatter
+    "UP017", # allow datetime.timezone.utc for Python 3.10 compatibility
 ]
 
 [tool.ruff.format]

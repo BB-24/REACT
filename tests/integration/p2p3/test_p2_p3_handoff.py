@@ -1,7 +1,7 @@
 """Integration tests for Person 2 (Acquisition/Storage) and Person 3 (Analysis/Ledger/Cosmos DB)."""
 
 import unittest
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from src.functions.shared import sas
 
@@ -11,7 +11,7 @@ class TestP2P3Handoff(unittest.TestCase):
 
     def test_p2p3_blob_path_structure_and_timestamp_ordering(self):
         """P2 evidence blobs follow strict <incident>/<target>/<artifact>-<utc_timestamp>.<ext> layout."""
-        t1 = datetime(2026, 10, 8, 12, 0, 0, tzinfo=UTC)
+        t1 = datetime(2026, 10, 8, 12, 0, 0, tzinfo=timezone.utc)
         blob_path_mem = sas.build_blob_name(
             "INC-2026-0001", "victim-vm-01", "memory", "raw", now=t1
         )

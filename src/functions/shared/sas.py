@@ -23,7 +23,7 @@ Two minting modes are supported, selected by the ``SAS_MODE`` app setting:
 """
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 
@@ -62,7 +62,7 @@ def build_blob_name(incident_id, target_name, artifact="memory", extension="raw"
     single incident's evidence stays contiguous and a re-run never silently
     overwrites an earlier image.
     """
-    stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     return f"{slug(incident_id)}/{slug(target_name)}/{slug(artifact)}-{stamp}.{extension}"
 
 
@@ -78,7 +78,7 @@ def _mint(blob_name, permission, ttl_minutes, account, container, credential, no
     account = account or config.require("EVIDENCE_STORAGE_ACCOUNT")
     ttl = ttl_minutes or config.get_int("SAS_TTL_MINUTES", DEFAULT_TTL_MINUTES)
 
-    issued_at = now or datetime.now(UTC)
+    issued_at = now or datetime.now(timezone.utc)
     start = issued_at - timedelta(minutes=CLOCK_SKEW_MINUTES)
     expiry = issued_at + timedelta(minutes=ttl)
 

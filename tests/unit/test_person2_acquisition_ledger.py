@@ -8,7 +8,7 @@ Covers:
 
 import hashlib
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from src.functions.shared import config, sas
@@ -65,7 +65,7 @@ class TestPerson2AcquisitionLedger(unittest.TestCase):
 
     def test_task_2_2_blob_naming_and_safe_slugs(self):
         """Blob path safely encodes incident ID, host name, and UTC timestamp."""
-        test_time = datetime(2026, 10, 8, 14, 30, 0, tzinfo=UTC)
+        test_time = datetime(2026, 10, 8, 14, 30, 0, tzinfo=timezone.utc)
         blob_name = sas.build_blob_name(
             "INC 2026/001", "vm@prod#01", "disk-os", "vhd", now=test_time
         )
@@ -73,7 +73,7 @@ class TestPerson2AcquisitionLedger(unittest.TestCase):
 
     def test_task_2_2_sas_ttl_and_clock_skew(self):
         """REQ-3.3.3: Token minting enforces TTL and includes clock skew backdating."""
-        issued_at = datetime(2026, 10, 8, 12, 0, 0, tzinfo=UTC)
+        issued_at = datetime(2026, 10, 8, 12, 0, 0, tzinfo=timezone.utc)
         with patch.dict(
             "os.environ",
             {
