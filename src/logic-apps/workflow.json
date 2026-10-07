@@ -83,7 +83,10 @@
         "Check_Containment_Success": {
           "type": "If",
           "expression": {
-            "equals": ["@outputs('Call_Network_Containment')['statusCode']", 200]
+            "or": [
+              { "equals": ["@outputs('Call_Network_Containment')['statusCode']", 200] },
+              { "equals": ["@body('Call_Network_Containment')?['status']", "Bypassed"] }
+            ]
           },
           "actions": {
             "Start_Acquisition_Workflow": {
@@ -150,7 +153,8 @@
                 "type": "Compose",
                 "inputs": {
                   "IncidentID": "@body('Parse_Incident')?['IncidentID']",
-                  "Error": "Containment function returned non-200 status",
+                  "Error": "Containment function returned non-200 status (not Contained or Bypassed)",
+                  "ContainmentStatus": "@body('Call_Network_Containment')?['status']",
                   "Details": "@body('Call_Network_Containment')",
                   "Timestamp": "@{utcNow()}"
                 },
