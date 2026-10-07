@@ -1,0 +1,114 @@
+name: REACT Integration & Contract Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'docs/payload-contract.json'
+      - '.github/workflows/integration-tests.yml'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      test-suite:
+        description: 'Test Suite to Execute'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - contracts
+          - p1p2
+          - p2p3
+          - p1p3
+          - e2e
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ============================================================================
+  # Matrix-based Integration & Contract Testing
+  # ============================================================================
+  run-integration-tests:
+    name: Integration Tests (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: src/functions/requirements.txt
+
+      - name: Install Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock ruff
+          if [ -f src/functions/requirements.txt ]; then
+            pip install -r src/functions/requirements.txt
+          fi
+
+      - name: Run Ruff Code Quality Check
+        run: |
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+
+      - name: Execute Contract & Integration Test Suite
+        env:
+          TEST_SUITE_SELECTION: ${{ github.event.inputs.test-suite || 'all' }}
+        run: |
+          export PYTHONPATH="${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/src:${GITHUB_WORKSPACE}/src/functions"
+          
+          echo "Executing test suite selection: $TEST_SUITE_SELECTION"
+          
+          case "$TEST_SUITE_SELECTION" in
+            contracts)
+              pytest tests/integration/contracts/ -v --junitxml=junit/contracts-results-${{ matrix.python-version }}.xml
+              ;;
+            p1p2)
+              pytest tests/integration/p1p2/ -v --junitxml=junit/p1p2-results-${{ matrix.python-version }}.xml
+              ;;
+            p2p3)
+              pytest tests/integration/p2p3/ -v --junitxml=junit/p2p3-results-${{ matrix.python-version }}.xml
+              ;;
+            p1p3)
+              pytest tests/integration/p1p3/ -v --junitxml=junit/p1p3-results-${{ matrix.python-version }}.xml
+              ;;
+            e2e)
+              pytest tests/integration/e2e/ -v --junitxml=junit/e2e-results-${{ matrix.python-version }}.xml
+              ;;
+            all|*)
+              pytest tests/ -v --cov=src/functions --cov-report=xml:coverage.xml --junitxml=junit/all-results-${{ matrix.python-version }}.xml
+              ;;
+          esac
+
+      - name: Upload Test Results XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-results-python-${{ matrix.python-version }}
+          path: junit/*.xml
+
+      - name: Upload Coverage Artifact
+        if: matrix.python-version == '3.11' && (github.event.inputs.test-suite == 'all' || github.event.inputs.test-suite == '')
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-report
+          path: coverage.xml

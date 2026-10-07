@@ -1,0 +1,1 @@
+"""Contract integration tests package."""

@@ -188,6 +188,33 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         compute_client = ComputeManagementClient(credential, incident.subscription_id)
         vm = compute_client.virtual_machines.get(vm_resource_group, vm_name)
         nic_id = _primary_nic_id(vm)
+
+        # Check for Critical-Infrastructure tag
+        vm_tags = vm.tags or {}
+        is_critical_infrastructure = vm_tags.get("Critical-Infrastructure", "").lower() == "true"
+
+        if is_critical_infrastructure:
+            LOGGER.warning(
+                "Incident %s: VM %s has Critical-Infrastructure:True tag. "
+                "Skipping network isolation per policy. Memory/disk acquisition will proceed.",
+                incident.incident_id,
+                vm_name,
+            )
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "status": "Bypassed",
+                        "IncidentID": incident.incident_id,
+                        "TargetVM": incident.target_vm,
+                        "Reason": "Critical-Infrastructure tag set to True",
+                        "NetworkInterface": nic_id,
+                        "Action": "Network isolation skipped; acquisition proceeds",
+                    }
+                ),
+                status_code=200,
+                mimetype="application/json",
+            )
+
         _, nic_resource_group, nic_name = _resource_parts(
             nic_id, "providers/Microsoft.Network/networkInterfaces"
         )
@@ -217,6 +244,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "NetworkInterface": nic_id,
                     "IsolationNSG": nsg_name,
                     "PreviousNSGId": previous_nsg_id,
+                    "CriticalInfrastructureBypass": False,
                 }
             ),
             status_code=200,

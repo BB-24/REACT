@@ -3,6 +3,7 @@
 import json
 import sys
 import unittest
+import unittest.mock
 from types import ModuleType
 from unittest.mock import MagicMock
 
@@ -21,8 +22,16 @@ if "azure" not in sys.modules:
         def get_json(self):
             return json.loads(self._body.decode("utf-8"))
 
+    class FakeHttpResponse:
+        def __init__(
+            self, body: str, *, status_code: int = 200, mimetype: str = "application/json"
+        ):
+            self.body = body
+            self.status_code = status_code
+            self.mimetype = mimetype
+
     func_mod.HttpRequest = FakeHttpRequest
-    func_mod.HttpResponse = MagicMock
+    func_mod.HttpResponse = FakeHttpResponse
     azure_mod.functions = func_mod
 
     sys.modules["azure"] = azure_mod
@@ -118,6 +127,82 @@ class TestNetworkContainment(unittest.TestCase):
         self.assertEqual(deny_rule["priority"], 4095)
         self.assertEqual(deny_rule["access"], "Deny")
         self.assertEqual(deny_rule["direction"], "Inbound")
+
+    # ------------------------------------------------------------------
+    # Critical-infrastructure tag bypass (TDD – feature not yet in main)
+    # ------------------------------------------------------------------
+
+    @unittest.mock.patch("src.functions.NetworkContainment.DefaultAzureCredential", autospec=False)
+    @unittest.mock.patch("src.functions.NetworkContainment.NetworkManagementClient", autospec=False)
+    @unittest.mock.patch("azure.mgmt.compute.ComputeManagementClient", autospec=False)
+    def test_critical_infrastructure_tag_bypass(
+        self, mock_compute_cls, mock_network_cls, mock_credential_cls
+    ):
+        """VM tagged CriticalInfrastructure should be bypassed, not contained."""
+        from src.functions.NetworkContainment import main
+
+        # Build a fake VM object whose tags include the critical marker.
+        fake_vm = MagicMock()
+        fake_vm.tags = {"Critical-Infrastructure": "true"}
+        fake_vm.network_profile.network_interfaces = [
+            MagicMock(
+                primary=True,
+                id="/subscriptions/11111111-1111-1111-1111-111111111111/"
+                "resourceGroups/Compromised-Environment-RG/"
+                "providers/Microsoft.Network/networkInterfaces/test-nic",
+            )
+        ]
+        mock_compute_cls.return_value.virtual_machines.get.return_value = fake_vm
+
+        req = self._make_request(self.valid_payload)
+        resp = main(req)
+        body = json.loads(resp.body)
+
+        self.assertEqual(body["status"], "Bypassed")
+        self.assertIn("Critical-Infrastructure", body.get("Reason", ""))
+        # NSG should *not* have been created.
+        mock_network_cls.return_value.network_security_groups.begin_create_or_update.assert_not_called()
+
+    @unittest.mock.patch("src.functions.NetworkContainment.DefaultAzureCredential", autospec=False)
+    @unittest.mock.patch("src.functions.NetworkContainment.NetworkManagementClient", autospec=False)
+    @unittest.mock.patch("azure.mgmt.compute.ComputeManagementClient", autospec=False)
+    def test_no_critical_infrastructure_tag_proceeds(
+        self, mock_compute_cls, mock_network_cls, mock_credential_cls
+    ):
+        """VM without CriticalInfrastructure tag should be contained normally."""
+        from src.functions.NetworkContainment import main
+
+        # Build a fake VM *without* the critical-infra tag.
+        fake_vm = MagicMock()
+        fake_vm.tags = {"Environment": "Production"}
+        fake_vm.network_profile.network_interfaces = [
+            MagicMock(
+                primary=True,
+                id="/subscriptions/11111111-1111-1111-1111-111111111111/"
+                "resourceGroups/Compromised-Environment-RG/"
+                "providers/Microsoft.Network/networkInterfaces/test-nic",
+            )
+        ]
+        mock_compute_cls.return_value.virtual_machines.get.return_value = fake_vm
+
+        fake_nic = MagicMock()
+        fake_nic.network_security_group = None
+        mock_network_cls.return_value.network_interfaces.get.return_value = fake_nic
+        mock_network_cls.return_value.network_security_groups.get.return_value = MagicMock(
+            id="/subscriptions/11111111-1111-1111-1111-111111111111/"
+            "resourceGroups/Compromised-Environment-RG/"
+            "providers/Microsoft.Network/networkSecurityGroups/Forensic-Isolation-NSG-INC-2026-0001"
+        )
+
+        req = self._make_request(self.valid_payload)
+        resp = main(req)
+        body = json.loads(resp.body)
+
+        self.assertEqual(body["status"], "Contained")
+        self.assertFalse(body["CriticalInfrastructureBypass"])
+        # NSG *should* have been created and attached.
+        mock_network_cls.return_value.network_security_groups.begin_create_or_update.assert_called()
+        mock_network_cls.return_value.network_interfaces.begin_create_or_update.assert_called()
 
 
 if __name__ == "__main__":
