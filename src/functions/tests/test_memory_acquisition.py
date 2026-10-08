@@ -3,8 +3,8 @@
 The Azure side is the mock estate, so the Run Command really does reach a
 simulated VM and really does produce a blob in the enclave container.
 """
-import pytest
 
+import pytest
 from MemoryAcquisition import (
     LINUX,
     PARAMETER_ORDER,
@@ -91,7 +91,7 @@ def test_linux_bootstrap_stages_everything_in_tmpfs():
 def test_linux_bootstrap_reads_parameters_positionally():
     script = build_bootstrap_script(LINUX)
     for index, _name in enumerate(PARAMETER_ORDER[:4], start=1):
-        assert '"${0}"'.format(index) in script
+        assert f'"${index}"' in script
 
 
 def test_unsupported_platform_is_rejected():
@@ -106,17 +106,13 @@ def test_every_parameter_is_protected():
     """All five carry or accompany a SAS; none may be readable off the VM."""
     command = build_run_command(WINDOWS, "eastus", {"SasUrl": "https://x/y?sig=z"})
     assert "parameters" not in command
-    assert [item["name"] for item in command["protected_parameters"]] == list(
-        PARAMETER_ORDER
-    )
+    assert [item["name"] for item in command["protected_parameters"]] == list(PARAMETER_ORDER)
 
 
 def test_parameter_order_is_stable():
     """Linux binds these positionally, so the order is a contract."""
     command = build_run_command(LINUX, "eastus", {name: name for name in PARAMETER_ORDER})
-    assert [item["value"] for item in command["protected_parameters"]] == list(
-        PARAMETER_ORDER
-    )
+    assert [item["value"] for item in command["protected_parameters"]] == list(PARAMETER_ORDER)
 
 
 def test_missing_parameters_become_empty_strings_not_none():
@@ -134,9 +130,7 @@ def test_failure_is_treated_as_deployment_failure():
 
 
 def test_acquisition_uploads_an_image_to_the_enclave(mock_estate, post, body):
-    response = handle_acquisition(
-        post({"IncidentId": "INC-1", "TargetVM": WINDOWS_VM})
-    )
+    response = handle_acquisition(post({"IncidentId": "INC-1", "TargetVM": WINDOWS_VM}))
     assert response.status_code == 200
     payload = body(response)
 
@@ -153,9 +147,7 @@ def test_acquisition_uploads_an_image_to_the_enclave(mock_estate, post, body):
 
 
 def test_linux_target_gets_avml_and_the_shell_script(mock_estate, post, body):
-    payload = body(
-        handle_acquisition(post({"IncidentId": "INC-2", "TargetVM": LINUX_VM}))
-    )
+    payload = body(handle_acquisition(post({"IncidentId": "INC-2", "TargetVM": LINUX_VM})))
     assert payload["platform"] == LINUX
     assert payload["toolBlob"] == "avml"
     assert payload["scriptBlob"] == "acquire-memory.sh"
@@ -167,9 +159,7 @@ def test_response_never_carries_the_sas(mock_estate, post, body):
     Only the expiry is returned, so the Logic App can reason about the window
     without ever holding the credential.
     """
-    response = handle_acquisition(
-        post({"IncidentId": "INC-3", "TargetVM": WINDOWS_VM})
-    )
+    response = handle_acquisition(post({"IncidentId": "INC-3", "TargetVM": WINDOWS_VM}))
     assert b"sig=" not in response.get_body()
 
     payload = body(response)
@@ -185,9 +175,7 @@ def test_run_command_record_logs_names_but_never_values(mock_estate, post):
 
 
 def test_custody_is_recorded_once_event_grid_delivers(mock_estate, post, body):
-    payload = body(
-        handle_acquisition(post({"IncidentId": "INC-5", "TargetVM": WINDOWS_VM}))
-    )
+    payload = body(handle_acquisition(post({"IncidentId": "INC-5", "TargetVM": WINDOWS_VM})))
     assert payload["custody"] == "pending-event-grid"
     assert mock_estate.ledger_rows == []
 

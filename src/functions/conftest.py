@@ -2,6 +2,7 @@
 
 The Functions host adds the app root automatically at runtime; pytest does not.
 """
+
 import json
 import os
 import sys
@@ -75,6 +76,7 @@ def post():
 @pytest.fixture
 def body():
     """Decode a function's JSON response body."""
+
     def _body(response):
         return json.loads(response.get_body())
 

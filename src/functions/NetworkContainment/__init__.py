@@ -15,13 +15,13 @@ Two properties matter for forensic soundness:
 * The previous NSG assignment of each NIC is captured and returned so the
   responder can restore the original network posture after the investigation.
 """
+
 import json
 import logging
 import re
 
 import azure.functions as func
 from azure.mgmt.network.models import NetworkSecurityGroup
-
 from shared import clients, config, sas
 
 bp = func.Blueprint()
@@ -118,9 +118,9 @@ def parse_target_vm(payload):
 
     if not subscription or not resource_group:
         raise ContainmentError(
-            "Target VM '{0}' was given by name, but the subscription ID and/or "
+            f"Target VM '{vm_name}' was given by name, but the subscription ID and/or "
             "resource group could not be resolved from the payload or "
-            "configuration.".format(vm_name)
+            "configuration."
         )
     return str(subscription), str(resource_group), str(vm_name)
 
@@ -130,17 +130,14 @@ def isolation_nsg_name(incident_id):
     return NSG_NAME_PREFIX + sas.slug(incident_id)[:MAX_INCIDENT_SLUG]
 
 
-def build_isolation_rules(storage_prefix=None, extra_allow_tags=None,
-                          storage_port=443):
+def build_isolation_rules(storage_prefix=None, extra_allow_tags=None, storage_port=443):
     """Return the deny-by-default rule set for the isolation NSG.
 
     ``storage_prefix`` defaults to the regional ``Storage`` service tag, which
     is narrower than the global one. Set ``EVIDENCE_STORAGE_SERVICE_TAG`` to a
     private endpoint address to narrow it further to the single enclave account.
     """
-    storage_prefix = storage_prefix or config.get(
-        "EVIDENCE_STORAGE_SERVICE_TAG", "Storage"
-    )
+    storage_prefix = storage_prefix or config.get("EVIDENCE_STORAGE_SERVICE_TAG", "Storage")
     rules = [
         {
             "name": "Allow-Evidence-Storage-Outbound",
@@ -163,7 +160,7 @@ def build_isolation_rules(storage_prefix=None, extra_allow_tags=None,
     for tag in extra_allow_tags or config.get_list("CONTAINMENT_EXTRA_ALLOW_TAGS"):
         rules.append(
             {
-                "name": "Allow-{0}-Outbound".format(sas.slug(tag)),
+                "name": f"Allow-{sas.slug(tag)}-Outbound",
                 "priority": priority,
                 "direction": "Outbound",
                 "access": "Allow",
@@ -173,8 +170,7 @@ def build_isolation_rules(storage_prefix=None, extra_allow_tags=None,
                 "destination_address_prefix": tag,
                 "destination_port_range": "443",
                 "description": (
-                    "Operator-approved containment exception for service tag "
-                    "'{0}'.".format(tag)
+                    f"Operator-approved containment exception for service tag '{tag}'."
                 ),
             }
         )
@@ -246,16 +242,12 @@ def swap_nics(network_client, vm, nsg_id):
     profile = getattr(vm, "network_profile", None)
     references = list(getattr(profile, "network_interfaces", None) or [])
     if not references:
-        raise ContainmentError(
-            "VM '{0}' has no network interfaces to contain.".format(vm.name)
-        )
+        raise ContainmentError(f"VM '{vm.name}' has no network interfaces to contain.")
 
     for reference in references:
         match = _NIC_ID.match(reference.id or "")
         if not match:
-            raise ContainmentError(
-                "Unrecognised network interface ID: {0}".format(reference.id)
-            )
+            raise ContainmentError(f"Unrecognised network interface ID: {reference.id}")
         nic_group = match.group("resource_group")
         nic_name = match.group("name")
 
@@ -265,21 +257,13 @@ def swap_nics(network_client, vm, nsg_id):
         if previous == nsg_id:
             # Replayed invocation: leave it alone, and do not clobber the
             # recorded original NSG with our own.
-            results.append(
-                {"nic": nic_name, "previousNsgId": previous, "changed": False}
-            )
+            results.append({"nic": nic_name, "previousNsgId": previous, "changed": False})
             continue
 
         nic.network_security_group = NetworkSecurityGroup(id=nsg_id)
-        network_client.network_interfaces.begin_create_or_update(
-            nic_group, nic_name, nic
-        ).result()
-        logging.info(
-            "Contained NIC %s (previous NSG: %s).", nic_name, previous or "none"
-        )
-        results.append(
-            {"nic": nic_name, "previousNsgId": previous, "changed": True}
-        )
+        network_client.network_interfaces.begin_create_or_update(nic_group, nic_name, nic).result()
+        logging.info("Contained NIC %s (previous NSG: %s).", nic_name, previous or "none")
+        results.append({"nic": nic_name, "previousNsgId": previous, "changed": True})
     return results
 
 
@@ -295,33 +279,25 @@ def handle_containment(req, credential=None):
         lowered = {str(key).lower(): value for key, value in payload.items()}
         incident_id = lowered.get("incidentid") or lowered.get("incident_id")
     if not incident_id:
-        return _json_response(
-            400, {"error": "Payload must include 'IncidentId'."}
-        )
+        return _json_response(400, {"error": "Payload must include 'IncidentId'."})
 
     try:
         subscription, resource_group, vm_name = parse_target_vm(payload)
     except ContainmentError as error:
         return _json_response(400, {"error": str(error)})
 
-    logging.info(
-        "Containment requested for VM %s (incident %s).", vm_name, incident_id
-    )
+    logging.info("Containment requested for VM %s (incident %s).", vm_name, incident_id)
 
     credential = credential or clients.credential()
     compute_client = clients.compute_client(subscription, cred=credential)
     network_client = clients.network_client(subscription, cred=credential)
 
     vm = compute_client.virtual_machines.get(resource_group, vm_name)
-    nsg = ensure_isolation_nsg(
-        network_client, resource_group, vm.location, incident_id
-    )
+    nsg = ensure_isolation_nsg(network_client, resource_group, vm.location, incident_id)
     swaps = swap_nics(network_client, vm, nsg.id)
 
     blob_name = sas.build_blob_name(incident_id, vm_name)
-    upload_url, expires_on = sas.mint_write_only_sas(
-        blob_name, credential=credential
-    )
+    upload_url, expires_on = sas.mint_write_only_sas(blob_name, credential=credential)
 
     # `uploadUrl` is a bearer credential. It is returned to the Logic App over
     # TLS and is deliberately absent from every log statement above.
@@ -359,6 +335,4 @@ def network_containment(req: func.HttpRequest) -> func.HttpResponse:
         return _json_response(500, {"error": str(error)})
     except Exception as error:  # noqa: BLE001 - the Logic App needs a verdict
         logging.exception("Containment failed.")
-        return _json_response(
-            500, {"error": "Containment failed: {0}".format(error)}
-        )
+        return _json_response(500, {"error": f"Containment failed: {error}"})

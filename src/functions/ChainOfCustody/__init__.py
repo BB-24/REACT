@@ -18,6 +18,7 @@ insert time -- see ``shared.ledger.record_evidence``.
 This is an HTTP-triggered webhook rather than an ``eventGridTrigger`` binding,
 per SOP 2 Phase 3.2, so it also answers the subscription validation handshake.
 """
+
 import hashlib
 import json
 import logging
@@ -25,7 +26,6 @@ from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
 import azure.functions as func
-
 from shared import clients, config, ledger
 
 bp = func.Blueprint()
@@ -41,7 +41,7 @@ def split_blob_url(blob_url):
     path = urlparse(blob_url).path.lstrip("/")
     container, separator, blob_name = path.partition("/")
     if not separator or not blob_name:
-        raise ValueError("Malformed blob URL: {0}".format(blob_url))
+        raise ValueError(f"Malformed blob URL: {blob_url}")
     return unquote(container), unquote(blob_name)
 
 
@@ -78,8 +78,7 @@ def _artifact_type(blob_name):
     return "artifact"
 
 
-def process_blob_created(event, blob_client_factory=None,
-                         connection_factory=None):
+def process_blob_created(event, blob_client_factory=None, connection_factory=None):
     """Hash one created blob and append its custody record. Returns a summary."""
     data = event.get("data") or {}
     blob_url = data.get("url")
@@ -91,10 +90,10 @@ def process_blob_created(event, blob_client_factory=None,
     if container != expected_container:
         logging.info(
             "Ignoring blob in container '%s'; the enclave container is '%s'.",
-            container, expected_container,
+            container,
+            expected_container,
         )
-        return {"blobName": blob_name, "status": "skipped",
-                "reason": "outside-enclave-container"}
+        return {"blobName": blob_name, "status": "skipped", "reason": "outside-enclave-container"}
 
     chunk_size = config.get_int("HASH_CHUNK_BYTES", DEFAULT_CHUNK_BYTES)
     factory = blob_client_factory or (
@@ -110,10 +109,8 @@ def process_blob_created(event, blob_client_factory=None,
         # The blob changed underneath us, or the read was truncated. Either way
         # the digest does not describe the stored object, so refuse to record it.
         raise RuntimeError(
-            "Size mismatch hashing {0}: blob reports {1} bytes, read {2}. "
-            "Refusing to write an unverifiable custody record.".format(
-                blob_name, declared_size, hashed_bytes
-            )
+            f"Size mismatch hashing {blob_name}: blob reports {declared_size} bytes, read {hashed_bytes}. "
+            "Refusing to write an unverifiable custody record."
         )
 
     metadata = {
@@ -123,9 +120,7 @@ def process_blob_created(event, blob_client_factory=None,
 
     # The acquisition scripts stamp these on the Put Block List commit; the app
     # setting is the fallback when an artifact arrives by another route.
-    initiator = metadata.get("initiatorobjectid") or config.get(
-        "LOGIC_APP_PRINCIPAL_ID", "unknown"
-    )
+    initiator = metadata.get("initiatorobjectid") or config.get("LOGIC_APP_PRINCIPAL_ID", "unknown")
     incident_id = metadata.get("incidentid") or blob_name.split("/")[0]
     acquired_utc = metadata.get("acquiredutc") or _isoformat(
         getattr(properties, "creation_time", None)
@@ -147,7 +142,10 @@ def process_blob_created(event, blob_client_factory=None,
     written = ledger.record_evidence(entry, connection_factory=connection_factory)
     logging.info(
         "Custody record for %s: sha256=%s size=%d rows=%d",
-        blob_name, digest, hashed_bytes, written,
+        blob_name,
+        digest,
+        hashed_bytes,
+        written,
     )
 
     result = {
@@ -166,7 +164,9 @@ def process_blob_created(event, blob_client_factory=None,
             logging.error(
                 "INTEGRITY ALERT: witness hash %s from the acquiring host does "
                 "not match the enclave hash %s for %s.",
-                witness, digest, blob_name,
+                witness,
+                digest,
+                blob_name,
             )
     return result
 
@@ -230,6 +230,4 @@ def chain_of_custody(req: func.HttpRequest) -> func.HttpResponse:
         # A 5xx makes Event Grid retry with backoff and eventually dead-letter,
         # so a transient SQL or storage fault never loses a custody record.
         logging.exception("Chain-of-custody processing failed.")
-        return _json_response(
-            500, {"error": "Custody recording failed: {0}".format(error)}
-        )
+        return _json_response(500, {"error": f"Custody recording failed: {error}"})

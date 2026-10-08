@@ -28,11 +28,11 @@ and more importantly the acquisition logic belongs in one reviewed, versioned
 artifact in the tool repository rather than being re-emitted from Python on
 every invocation. The bootstrap only fetches and invokes it.
 """
+
 import json
 import logging
 
 import azure.functions as func
-
 from NetworkContainment import ContainmentError, parse_target_vm
 from shared import clients, config, sas
 
@@ -74,8 +74,7 @@ def target_platform(vm, payload=None):
         lowered = str(override).strip().lower()
         if lowered not in (WINDOWS, LINUX):
             raise AcquisitionError(
-                "platform override must be 'windows' or 'linux', got "
-                "'{0}'.".format(override)
+                f"platform override must be 'windows' or 'linux', got '{override}'."
             )
         return lowered
 
@@ -83,10 +82,8 @@ def target_platform(vm, payload=None):
     os_type = getattr(os_disk, "os_type", None)
     if os_type is None:
         raise AcquisitionError(
-            "VM '{0}' does not report an OS type; pass 'platform' explicitly "
-            "so the correct acquisition tool is used.".format(
-                getattr(vm, "name", "unknown")
-            )
+            f"VM '{getattr(vm, 'name', 'unknown')}' does not report an OS type; "
+            "pass 'platform' explicitly so the correct acquisition tool is used."
         )
     return WINDOWS if str(os_type).lower().startswith("windows") else LINUX
 
@@ -99,40 +96,40 @@ def build_windows_bootstrap():
     a bounded, known write of a file we supplied. The multi-gigabyte *image*,
     which is the artifact REQ-3.3.4 is about, never touches the disk.
     """
-    return "\n".join([
-        "param(",
-        "    [Parameter(Mandatory = $true)][string]$SasUrl,",
-        "    [Parameter(Mandatory = $true)][string]$ToolUrl,",
-        "    [Parameter(Mandatory = $true)][string]$ScriptUrl,",
-        "    [Parameter(Mandatory = $true)][string]$IncidentId,",
-        "    [string]$InitiatorObjectId = ''",
-        ")",
-        "$ErrorActionPreference = 'Stop'",
-        "$ProgressPreference = 'SilentlyContinue'",
-        "[Net.ServicePointManager]::SecurityProtocol = "
-        "[Net.SecurityProtocolType]::Tls12",
-        "",
-        "$stage = Join-Path $env:TEMP ('react-' + $IncidentId)",
-        "$tools = Join-Path $stage 'tools'",
-        "New-Item -ItemType Directory -Force -Path $tools | Out-Null",
-        "$scriptPath = Join-Path $stage 'Acquire-Memory.ps1'",
-        "$toolPath = Join-Path $tools 'winpmem.exe'",
-        "",
-        "try {",
-        "    # REQ-3.3.2: both artifacts come from the tool repository over a",
-        "    # read-only, blob-scoped SAS.",
-        "    Invoke-WebRequest -Uri $ScriptUrl -OutFile $scriptPath "
-        "-UseBasicParsing",
-        "    Invoke-WebRequest -Uri $ToolUrl -OutFile $toolPath -UseBasicParsing",
-        "",
-        "    & $scriptPath -SasUrl $SasUrl -IncidentId $IncidentId "
-        "-WinPmemPath $toolPath -InitiatorObjectId $InitiatorObjectId",
-        "}",
-        "finally {",
-        "    # Leave nothing of ours behind on the evidence source.",
-        "    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $stage",
-        "}",
-    ])
+    return "\n".join(
+        [
+            "param(",
+            "    [Parameter(Mandatory = $true)][string]$SasUrl,",
+            "    [Parameter(Mandatory = $true)][string]$ToolUrl,",
+            "    [Parameter(Mandatory = $true)][string]$ScriptUrl,",
+            "    [Parameter(Mandatory = $true)][string]$IncidentId,",
+            "    [string]$InitiatorObjectId = ''",
+            ")",
+            "$ErrorActionPreference = 'Stop'",
+            "$ProgressPreference = 'SilentlyContinue'",
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
+            "",
+            "$stage = Join-Path $env:TEMP ('react-' + $IncidentId)",
+            "$tools = Join-Path $stage 'tools'",
+            "New-Item -ItemType Directory -Force -Path $tools | Out-Null",
+            "$scriptPath = Join-Path $stage 'Acquire-Memory.ps1'",
+            "$toolPath = Join-Path $tools 'winpmem.exe'",
+            "",
+            "try {",
+            "    # REQ-3.3.2: both artifacts come from the tool repository over a",
+            "    # read-only, blob-scoped SAS.",
+            "    Invoke-WebRequest -Uri $ScriptUrl -OutFile $scriptPath -UseBasicParsing",
+            "    Invoke-WebRequest -Uri $ToolUrl -OutFile $toolPath -UseBasicParsing",
+            "",
+            "    & $scriptPath -SasUrl $SasUrl -IncidentId $IncidentId "
+            "-WinPmemPath $toolPath -InitiatorObjectId $InitiatorObjectId",
+            "}",
+            "finally {",
+            "    # Leave nothing of ours behind on the evidence source.",
+            "    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $stage",
+            "}",
+        ]
+    )
 
 
 def build_linux_bootstrap():
@@ -141,36 +138,37 @@ def build_linux_bootstrap():
     Everything is staged under ``/dev/shm`` -- RAM, not a block device -- so on
     Linux not even the tool binary reaches the disk.
     """
-    return "\n".join([
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "",
-        'SAS_URL="$1"',
-        'TOOL_URL="$2"',
-        'SCRIPT_URL="$3"',
-        'INCIDENT_ID="$4"',
-        'INITIATOR_OBJECT_ID="${5:-}"',
-        "",
-        'STAGE="/dev/shm/react-${INCIDENT_ID}"',
-        'mkdir -p "${STAGE}/tools"',
-        'cleanup() { rm -rf "${STAGE}"; }',
-        "trap cleanup EXIT",
-        "",
-        "# REQ-3.3.2: tool and script both come from the repository container",
-        "# over a read-only, blob-scoped SAS.",
-        'curl --fail --silent --show-error --location "${SCRIPT_URL}" '
-        '-o "${STAGE}/acquire-memory.sh"',
-        'curl --fail --silent --show-error --location "${TOOL_URL}" '
-        '-o "${STAGE}/tools/avml"',
-        'chmod +x "${STAGE}/acquire-memory.sh" "${STAGE}/tools/avml"',
-        "",
-        '"${STAGE}/acquire-memory.sh" \\',
-        '    --sas-url "${SAS_URL}" \\',
-        '    --incident-id "${INCIDENT_ID}" \\',
-        '    --avml-path "${STAGE}/tools/avml" \\',
-        '    --stage-dir /dev/shm \\',
-        '    --initiator-object-id "${INITIATOR_OBJECT_ID}"',
-    ])
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "",
+            'SAS_URL="$1"',
+            'TOOL_URL="$2"',
+            'SCRIPT_URL="$3"',
+            'INCIDENT_ID="$4"',
+            'INITIATOR_OBJECT_ID="${5:-}"',
+            "",
+            'STAGE="/dev/shm/react-${INCIDENT_ID}"',
+            'mkdir -p "${STAGE}/tools"',
+            'cleanup() { rm -rf "${STAGE}"; }',
+            "trap cleanup EXIT",
+            "",
+            "# REQ-3.3.2: tool and script both come from the repository container",
+            "# over a read-only, blob-scoped SAS.",
+            'curl --fail --silent --show-error --location "${SCRIPT_URL}" '
+            '-o "${STAGE}/acquire-memory.sh"',
+            'curl --fail --silent --show-error --location "${TOOL_URL}" -o "${STAGE}/tools/avml"',
+            'chmod +x "${STAGE}/acquire-memory.sh" "${STAGE}/tools/avml"',
+            "",
+            '"${STAGE}/acquire-memory.sh" \\',
+            '    --sas-url "${SAS_URL}" \\',
+            '    --incident-id "${INCIDENT_ID}" \\',
+            '    --avml-path "${STAGE}/tools/avml" \\',
+            "    --stage-dir /dev/shm \\",
+            '    --initiator-object-id "${INITIATOR_OBJECT_ID}"',
+        ]
+    )
 
 
 def build_bootstrap_script(platform):
@@ -178,7 +176,7 @@ def build_bootstrap_script(platform):
         return build_windows_bootstrap()
     if platform == LINUX:
         return build_linux_bootstrap()
-    raise AcquisitionError("Unsupported platform '{0}'.".format(platform))
+    raise AcquisitionError(f"Unsupported platform '{platform}'.")
 
 
 def build_run_command(platform, location, parameters, timeout_seconds=None):
@@ -192,8 +190,7 @@ def build_run_command(platform, location, parameters, timeout_seconds=None):
         "location": location,
         "source": {"script": build_bootstrap_script(platform)},
         "protected_parameters": [
-            {"name": name, "value": str(parameters.get(name, ""))}
-            for name in PARAMETER_ORDER
+            {"name": name, "value": str(parameters.get(name, ""))} for name in PARAMETER_ORDER
         ],
         "timeout_in_seconds": int(
             timeout_seconds
@@ -210,10 +207,7 @@ def _tool_blob_name(platform):
 
 
 def _script_blob_name(platform):
-    setting = (
-        "WINDOWS_SCRIPT_BLOB_NAME" if platform == WINDOWS
-        else "LINUX_SCRIPT_BLOB_NAME"
-    )
+    setting = "WINDOWS_SCRIPT_BLOB_NAME" if platform == WINDOWS else "LINUX_SCRIPT_BLOB_NAME"
     return config.get(setting, DEFAULT_SCRIPT_BLOBS[platform])
 
 
@@ -273,9 +267,7 @@ def handle_acquisition(req, credential=None):
 
     # REQ-3.3.3: 60-minute, write-only, single-blob upload token.
     blob_name = sas.build_blob_name(incident_id, vm_name)
-    upload_url, expires_on = sas.mint_write_only_sas(
-        blob_name, credential=credential
-    )
+    upload_url, expires_on = sas.mint_write_only_sas(blob_name, credential=credential)
 
     # REQ-3.3.2: read-only tokens for the tool repository.
     tool_blob = _tool_blob_name(platform)
@@ -283,9 +275,7 @@ def handle_acquisition(req, credential=None):
     tool_url, _ = sas.mint_read_only_sas(tool_blob, credential=credential)
     script_url, _ = sas.mint_read_only_sas(script_blob, credential=credential)
 
-    initiator = lowered.get("initiatorobjectid") or config.get(
-        "LOGIC_APP_PRINCIPAL_ID", ""
-    )
+    initiator = lowered.get("initiatorobjectid") or config.get("LOGIC_APP_PRINCIPAL_ID", "")
 
     run_command = build_run_command(
         platform,
@@ -298,14 +288,15 @@ def handle_acquisition(req, credential=None):
             "InitiatorObjectId": initiator,
         },
     )
-    run_command_name = "{0}{1}".format(
-        RUN_COMMAND_NAME_PREFIX, sas.slug(incident_id)
-    )[:80]
+    run_command_name = f"{RUN_COMMAND_NAME_PREFIX}{sas.slug(incident_id)}"[:80]
 
     # Note the absence of any URL in this log line: all three carry a SAS.
     logging.info(
         "Dispatching %s acquisition to %s via Run Command '%s' (incident %s).",
-        platform, vm_name, run_command_name, incident_id,
+        platform,
+        vm_name,
+        run_command_name,
+        incident_id,
     )
 
     poller = compute_client.virtual_machine_run_commands.begin_create_or_update(
@@ -353,6 +344,4 @@ def memory_acquisition(req: func.HttpRequest) -> func.HttpResponse:
         return _json_response(500, {"error": str(error)})
     except Exception as error:  # noqa: BLE001 - the Logic App needs a verdict
         logging.exception("Memory acquisition failed.")
-        return _json_response(
-            500, {"error": "Memory acquisition failed: {0}".format(error)}
-        )
+        return _json_response(500, {"error": f"Memory acquisition failed: {error}"})

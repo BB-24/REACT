@@ -11,19 +11,20 @@ same metadata the real ``Acquire-Memory.ps1`` stamps on its Put Block List
 commit, and lets the resulting ``BlobCreated`` event flow on to ChainOfCustody.
 The pipeline downstream of acquisition is therefore exercised for real.
 """
+
 import hashlib
 import json
 from urllib.parse import urlparse
 
 from . import _world
-from ._world import Model, MockAzureError
+from ._world import MockAzureError, Model
 
 # Small enough to hash instantly in a test, large enough to prove the chunked
 # hashing path in ChainOfCustody actually loops.
 DEFAULT_IMAGE_BYTES = 1024 * 1024
 
 
-class _Poller(object):
+class _Poller:
     """Stand-in for an ``LROPoller``. The mock completes synchronously."""
 
     def __init__(self, value):
@@ -46,18 +47,15 @@ def synthesize_memory_image(seed_text, size_bytes=DEFAULT_IMAGE_BYTES):
     makes the custody assertions in the tests stable.
     """
     banner = (
-        "REACT MOCK MEMORY IMAGE -- {0}\n"
+        f"REACT MOCK MEMORY IMAGE -- {seed_text}\n"
         "Not real volatile memory. Replace mock mode with Azure to capture "
         "the genuine article.\n"
-    ).format(seed_text).encode("utf-8")
+    ).encode()
 
     body = bytearray(banner)
     counter = 0
     while len(body) < size_bytes:
-        body.extend(
-            hashlib.sha256("{0}:{1}".format(seed_text, counter).encode("utf-8"))
-            .digest()
-        )
+        body.extend(hashlib.sha256(f"{seed_text}:{counter}".encode()).digest())
         counter += 1
     return bytes(body[:size_bytes])
 
@@ -69,7 +67,7 @@ def parse_blob_sas_url(url):
     path = parsed.path.lstrip("/")
     container, separator, blob_name = path.partition("/")
     if not separator or not blob_name:
-        raise MockAzureError("Not a blob SAS URL: {0}".format(url))
+        raise MockAzureError(f"Not a blob SAS URL: {url}")
     return account, container, blob_name
 
 
@@ -86,7 +84,7 @@ def _flatten_parameters(run_command):
     return merged
 
 
-class _VirtualMachinesOperations(object):
+class _VirtualMachinesOperations:
     def __init__(self, world, subscription_id):
         self._world = world
         self._subscription = subscription_id
@@ -95,65 +93,50 @@ class _VirtualMachinesOperations(object):
         key = _world.vm_id(self._subscription, resource_group_name, vm_name).lower()
         try:
             return self._world.vms[key]
-        except KeyError:
+        except KeyError as exc:
             raise MockAzureError(
-                "VM '{0}' not found in resource group '{1}' of subscription "
-                "'{2}'.".format(vm_name, resource_group_name, self._subscription)
-            )
+                f"VM '{vm_name}' not found in resource group '{resource_group_name}' of subscription "
+                f"'{self._subscription}'."
+            ) from exc
 
 
-class _DisksOperations(object):
+class _DisksOperations:
     def __init__(self, world, subscription_id):
         self._world = world
         self._subscription = subscription_id
 
     def get(self, resource_group_name, disk_name, **kwargs):
-        key = _world.disk_id(
-            self._subscription, resource_group_name, disk_name
-        ).lower()
+        key = _world.disk_id(self._subscription, resource_group_name, disk_name).lower()
         try:
             return self._world.disks[key]
-        except KeyError:
+        except KeyError as exc:
             raise MockAzureError(
-                "Managed disk '{0}' not found in '{1}'.".format(
-                    disk_name, resource_group_name
-                )
-            )
+                f"Managed disk '{disk_name}' not found in '{resource_group_name}'."
+            ) from exc
 
 
-class _SnapshotsOperations(object):
+class _SnapshotsOperations:
     def __init__(self, world, subscription_id):
         self._world = world
         self._subscription = subscription_id
 
-    def begin_create_or_update(self, resource_group_name, snapshot_name, snapshot,
-                               **kwargs):
+    def begin_create_or_update(self, resource_group_name, snapshot_name, snapshot, **kwargs):
         payload = snapshot if isinstance(snapshot, dict) else snapshot.as_dict()
         creation = payload.get("creation_data") or payload.get("creationData") or {}
-        source = creation.get("source_resource_id") or creation.get(
-            "sourceResourceId"
-        )
-        create_option = (
-            creation.get("create_option") or creation.get("createOption") or "Copy"
-        )
+        source = creation.get("source_resource_id") or creation.get("sourceResourceId")
+        create_option = creation.get("create_option") or creation.get("createOption") or "Copy"
 
         if not source:
             raise MockAzureError(
-                "Snapshot '{0}' has no creation_data.source_resource_id.".format(
-                    snapshot_name
-                )
+                f"Snapshot '{snapshot_name}' has no creation_data.source_resource_id."
             )
         known = dict(self._world.disks)
         known.update(self._world.snapshots)
         if source.lower() not in known:
-            raise MockAzureError(
-                "Snapshot source '{0}' does not exist.".format(source)
-            )
+            raise MockAzureError(f"Snapshot source '{source}' does not exist.")
         origin = known[source.lower()]
 
-        identifier = _world.snapshot_id(
-            self._subscription, resource_group_name, snapshot_name
-        )
+        identifier = _world.snapshot_id(self._subscription, resource_group_name, snapshot_name)
         record = Model(
             id=identifier,
             name=snapshot_name,
@@ -177,26 +160,20 @@ class _SnapshotsOperations(object):
         return _Poller(record)
 
     def get(self, resource_group_name, snapshot_name, **kwargs):
-        key = _world.snapshot_id(
-            self._subscription, resource_group_name, snapshot_name
-        ).lower()
+        key = _world.snapshot_id(self._subscription, resource_group_name, snapshot_name).lower()
         try:
             return self._world.snapshots[key]
-        except KeyError:
+        except KeyError as exc:
             raise MockAzureError(
-                "Snapshot '{0}' not found in '{1}'.".format(
-                    snapshot_name, resource_group_name
-                )
-            )
+                f"Snapshot '{snapshot_name}' not found in '{resource_group_name}'."
+            ) from exc
 
     def begin_delete(self, resource_group_name, snapshot_name, **kwargs):
-        key = _world.snapshot_id(
-            self._subscription, resource_group_name, snapshot_name
-        ).lower()
+        key = _world.snapshot_id(self._subscription, resource_group_name, snapshot_name).lower()
         return _Poller(self._world.snapshots.pop(key, None))
 
 
-class _RunCommandsOperations(object):
+class _RunCommandsOperations:
     """Managed Run Command (``virtualMachines/runCommands``), the v2 API.
 
     v2 rather than ``begin_run_command`` because it accepts
@@ -208,18 +185,13 @@ class _RunCommandsOperations(object):
         self._world = world
         self._subscription = subscription_id
 
-    def begin_create_or_update(self, resource_group_name, vm_name,
-                               run_command_name, run_command, **kwargs):
-        payload = (
-            run_command if isinstance(run_command, dict) else run_command.as_dict()
-        )
-        vm_key = _world.vm_id(
-            self._subscription, resource_group_name, vm_name
-        ).lower()
+    def begin_create_or_update(
+        self, resource_group_name, vm_name, run_command_name, run_command, **kwargs
+    ):
+        payload = run_command if isinstance(run_command, dict) else run_command.as_dict()
+        vm_key = _world.vm_id(self._subscription, resource_group_name, vm_name).lower()
         if vm_key not in self._world.vms:
-            raise MockAzureError(
-                "Cannot run a command on '{0}': VM not found.".format(vm_name)
-            )
+            raise MockAzureError(f"Cannot run a command on '{vm_name}': VM not found.")
         vm = self._world.vms[vm_key]
 
         arguments = _flatten_parameters(payload)
@@ -242,7 +214,7 @@ class _RunCommandsOperations(object):
 
         output = self._simulate_acquisition(vm, arguments)
         result = Model(
-            id="{0}/runCommands/{1}".format(vm.id, run_command_name),
+            id=f"{vm.id}/runCommands/{run_command_name}",
             name=run_command_name,
             location=vm.location,
             provisioning_state="Succeeded",
@@ -269,19 +241,18 @@ class _RunCommandsOperations(object):
         account, container, blob_name = parse_blob_sas_url(sas_url)
 
         size = int(arguments.get("MockImageBytes") or DEFAULT_IMAGE_BYTES)
-        image = synthesize_memory_image(
-            "{0}|{1}".format(incident_id, vm.name), size
-        )
+        image = synthesize_memory_image(f"{incident_id}|{vm.name}", size)
         witness = hashlib.sha256(image).hexdigest()
         acquired_utc = _world.utcnow().isoformat()
 
-        os_type = getattr(
-            getattr(vm.storage_profile, "os_disk", None), "os_type", "Windows"
-        )
+        os_type = getattr(getattr(vm.storage_profile, "os_disk", None), "os_type", "Windows")
         tool = "winpmem" if str(os_type).lower() == "windows" else "avml"
 
         self._world.put_blob(
-            account, container, blob_name, image,
+            account,
+            container,
+            blob_name,
+            image,
             metadata={
                 "incidentid": incident_id,
                 "sourcehost": vm.name,
@@ -304,7 +275,7 @@ class _RunCommandsOperations(object):
         }
 
 
-class MockComputeManagementClient(object):
+class MockComputeManagementClient:
     def __init__(self, credential, subscription_id, **kwargs):
         self._credential = credential
         self.subscription_id = subscription_id
@@ -312,6 +283,4 @@ class MockComputeManagementClient(object):
         self.virtual_machines = _VirtualMachinesOperations(estate, subscription_id)
         self.disks = _DisksOperations(estate, subscription_id)
         self.snapshots = _SnapshotsOperations(estate, subscription_id)
-        self.virtual_machine_run_commands = _RunCommandsOperations(
-            estate, subscription_id
-        )
+        self.virtual_machine_run_commands = _RunCommandsOperations(estate, subscription_id)

@@ -5,10 +5,11 @@ genuine SDK function, handed fake key material -- so every assertion about
 permissions, expiry and scope in ``test_sas.py`` exercises the real code path.
 The token simply will not authenticate against Azure, which is the point.
 """
+
 from azure.storage.blob import UserDelegationKey
 
 from . import _world
-from ._world import Model, MockAzureError
+from ._world import MockAzureError, Model
 
 DEFAULT_CHUNK_BYTES = 4 * 1024 * 1024
 
@@ -22,20 +23,20 @@ def _stamp(moment):
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-class _Downloader(object):
+class _Downloader:
     def __init__(self, data, chunk_bytes):
         self._data = data
         self._chunk = max(int(chunk_bytes or DEFAULT_CHUNK_BYTES), 1)
 
     def chunks(self):
         for offset in range(0, len(self._data), self._chunk):
-            yield self._data[offset:offset + self._chunk]
+            yield self._data[offset : offset + self._chunk]
 
     def readall(self):
         return self._data
 
 
-class MockBlobClient(object):
+class MockBlobClient:
     def __init__(self, account, container, blob_name, chunk_bytes=None):
         self.account_name = account
         self.container_name = container
@@ -44,8 +45,7 @@ class MockBlobClient(object):
         self._world = _world.world()
 
     @classmethod
-    def from_blob_url(cls, blob_url, credential=None, max_chunk_get_size=None,
-                      **kwargs):
+    def from_blob_url(cls, blob_url, credential=None, max_chunk_get_size=None, **kwargs):
         from ._compute import parse_blob_sas_url
 
         account, container, blob_name = parse_blob_sas_url(blob_url)
@@ -53,14 +53,10 @@ class MockBlobClient(object):
 
     @property
     def url(self):
-        return "https://{0}.blob.core.windows.net/{1}/{2}".format(
-            self.account_name, self.container_name, self.blob_name
-        )
+        return f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{self.blob_name}"
 
     def _blob(self):
-        return self._world.get_blob(
-            self.account_name, self.container_name, self.blob_name
-        )
+        return self._world.get_blob(self.account_name, self.container_name, self.blob_name)
 
     def exists(self):
         key = (self.account_name, self.container_name, self.blob_name)
@@ -74,7 +70,7 @@ class MockBlobClient(object):
             metadata=dict(blob.metadata),
             creation_time=blob.creation_time,
             last_modified=blob.creation_time,
-            etag='"{0}"'.format(blob.sha256()[:16]),
+            etag=f'"{blob.sha256()[:16]}"',
             blob_type="BlockBlob",
         )
 
@@ -89,16 +85,14 @@ class MockBlobClient(object):
         key = (self.account_name, self.container_name, self.blob_name)
         if key in self._world.blobs and not overwrite:
             raise MockAzureError(
-                "Blob '{0}' already exists and overwrite was not requested.".format(
-                    self.blob_name
-                )
+                f"Blob '{self.blob_name}' already exists and overwrite was not requested."
             )
         return self._world.put_blob(
             self.account_name, self.container_name, self.blob_name, data, metadata
         )
 
 
-class MockBlobServiceClient(object):
+class MockBlobServiceClient:
     def __init__(self, account_url, credential=None, **kwargs):
         self.url = account_url
         self.account_name = account_url.split("//", 1)[-1].split(".", 1)[0]

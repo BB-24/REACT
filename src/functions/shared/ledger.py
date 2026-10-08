@@ -13,6 +13,7 @@ out of a ledger table after the fact, the insert is guarded with a
 The expected schema is documented in
 ``src/functions/ChainOfCustody/LEDGER_CONTRACT.md``.
 """
+
 import logging
 import re
 
@@ -46,8 +47,7 @@ def table_name():
     name = config.get("LEDGER_TABLE", DEFAULT_TABLE)
     if not _TABLE_NAME.match(name):
         raise config.ConfigError(
-            "LEDGER_TABLE must be a bare or schema-qualified identifier, got "
-            "'{0}'.".format(name)
+            f"LEDGER_TABLE must be a bare or schema-qualified identifier, got '{name}'."
         )
     return name
 
@@ -60,8 +60,7 @@ def build_insert(table):
         "SELECT {placeholders} "
         "WHERE NOT EXISTS ("
         "SELECT 1 FROM {table} WHERE BlobUri = ? AND Sha256Hash = ?"
-        ")".format(table=table, columns=", ".join(COLUMNS),
-                   placeholders=placeholders)
+        ")".format(table=table, columns=", ".join(COLUMNS), placeholders=placeholders)
     )
 
 
@@ -70,9 +69,7 @@ def build_lookup(table, columns):
     return (
         "SELECT TOP 1 {columns} FROM {table} "
         "WHERE IncidentId = ? AND ArtifactType = ? "
-        "ORDER BY LedgerEntryId DESC".format(
-            columns=", ".join(columns), table=table
-        )
+        "ORDER BY LedgerEntryId DESC".format(columns=", ".join(columns), table=table)
     )
 
 
@@ -98,7 +95,7 @@ def find_evidence(incident_id, artifact_type, connection_factory=None):
 
     if not row:
         return None
-    return dict(zip(LOOKUP_COLUMNS, row))
+    return dict(zip(LOOKUP_COLUMNS, row, strict=False))
 
 
 def _connect():
@@ -114,11 +111,7 @@ def record_evidence(entry, connection_factory=None):
     """
     missing = [column for column in COLUMNS if column not in entry]
     if missing:
-        raise ValueError(
-            "Custody entry is missing required fields: {0}".format(
-                ", ".join(missing)
-            )
-        )
+        raise ValueError(f"Custody entry is missing required fields: {', '.join(missing)}")
 
     statement = build_insert(table_name())
     values = [entry[column] for column in COLUMNS]
@@ -136,7 +129,7 @@ def record_evidence(entry, connection_factory=None):
 
     if written == 0:
         logging.info(
-            "Custody record for %s already present; duplicate Event Grid "
-            "delivery ignored.", entry["BlobName"]
+            "Custody record for %s already present; duplicate Event Grid delivery ignored.",
+            entry["BlobName"],
         )
     return written

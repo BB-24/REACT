@@ -15,6 +15,7 @@ are the behaviours the design leans on:
   verifiable digest of the insert history; ``World.verify_ledger`` recomputes
   the mock's equivalent, so tampering with a row in memory is detectable.
 """
+
 import re
 
 from . import _world
@@ -33,7 +34,7 @@ _LOOKUP = re.compile(
 _FORBIDDEN = re.compile(r"^\s*(UPDATE|DELETE|DROP|TRUNCATE|ALTER)\b", re.IGNORECASE)
 
 
-class MockCursor(object):
+class MockCursor:
     def __init__(self, world):
         self._world = world
         self.rowcount = -1
@@ -45,7 +46,7 @@ class MockCursor(object):
         if _FORBIDDEN.match(statement):
             raise MockAzureError(
                 "Azure SQL Ledger tables reject UPDATE and DELETE. Statement: "
-                "{0}".format(statement.strip()[:80])
+                f"{statement.strip()[:80]}"
             )
 
         insert = _INSERT.match(statement)
@@ -60,15 +61,15 @@ class MockCursor(object):
 
         raise MockAzureError(
             "The mock ledger does not understand this statement, so it will "
-            "not guess at a result: {0}".format(statement.strip()[:120])
+            f"not guess at a result: {statement.strip()[:120]}"
         )
 
     def _execute_insert(self, match, parameters):
         columns = [name.strip() for name in match.group("columns").split(",")]
-        values = parameters[:len(columns)]
-        guard = parameters[len(columns):]
+        values = parameters[: len(columns)]
+        guard = parameters[len(columns) :]
 
-        row = dict(zip(columns, values))
+        row = dict(zip(columns, values, strict=False))
 
         # `... WHERE NOT EXISTS (SELECT 1 ... WHERE BlobUri = ? AND
         # Sha256Hash = ?)` -- the idempotency guard against Event Grid's
@@ -76,8 +77,7 @@ class MockCursor(object):
         if len(guard) == 2:
             blob_uri, digest = guard
             for existing in self._world.ledger_rows:
-                if (existing.get("BlobUri") == blob_uri
-                        and existing.get("Sha256Hash") == digest):
+                if existing.get("BlobUri") == blob_uri and existing.get("Sha256Hash") == digest:
                     self.rowcount = 0
                     self._results = []
                     return
@@ -87,19 +87,15 @@ class MockCursor(object):
         self._results = []
 
     def _execute_lookup(self, match, parameters):
-        columns = [
-            name.strip() for name in match.group("columns").split(",")
-        ]
+        columns = [name.strip() for name in match.group("columns").split(",")]
         incident_id, artifact_type = parameters[0], parameters[1]
         matched = [
-            row for row in self._world.ledger_rows
-            if row.get("IncidentId") == incident_id
-            and row.get("ArtifactType") == artifact_type
+            row
+            for row in self._world.ledger_rows
+            if row.get("IncidentId") == incident_id and row.get("ArtifactType") == artifact_type
         ]
         matched.sort(key=lambda row: row["LedgerEntryId"], reverse=True)
-        self._results = [
-            tuple(row.get(column) for column in columns) for row in matched
-        ]
+        self._results = [tuple(row.get(column) for column in columns) for row in matched]
         self.rowcount = len(self._results)
 
     def fetchall(self):
@@ -112,7 +108,7 @@ class MockCursor(object):
         self._results = []
 
 
-class MockSqlConnection(object):
+class MockSqlConnection:
     def __init__(self):
         self._world = _world.world()
         self.closed = False
