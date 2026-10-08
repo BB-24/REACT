@@ -304,6 +304,7 @@ Your endpoint must validate:
 
 ## 8. Related Documents
 
+- [Automated Testing Guide](./testing-guide.md) — Unit & integration test execution guide
 - [Orchestration Overview](./orchestration.md) — Full architecture
 - [Payload Contract](./payload-contract.json) — JSON Schema for all payloads
 - [Security Baseline](./security-baseline.md) — Compliance requirements
