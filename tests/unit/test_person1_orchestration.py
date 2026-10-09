@@ -190,7 +190,7 @@ class TestPerson1Orchestration(unittest.TestCase):
         resp = containment_main(self._make_req(self.sample_payload))
         self.assertEqual(resp.status_code, 200)
 
-        data = json.loads(resp.body)
+        data = json.loads(resp.get_body())
         self.assertEqual(data["status"], "Bypassed")
         self.assertIn("Critical-Infrastructure", data["Reason"])
         mock_network.return_value.network_security_groups.begin_create_or_update.assert_not_called()

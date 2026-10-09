@@ -68,7 +68,7 @@ class TestP1P2Integration(unittest.TestCase):
         resp = containment_main(req)
         self.assertEqual(resp.status_code, 200)
 
-        body = json.loads(resp.body)
+        body = json.loads(resp.get_body())
         self.assertEqual(body["status"], "Contained")
         self.assertEqual(body["IsolationNSG"], "Forensic-Isolation-NSG-INC-2026-9001")
 
@@ -107,7 +107,7 @@ class TestP1P2Integration(unittest.TestCase):
         resp = containment_main(req)
         self.assertEqual(resp.status_code, 200)
 
-        body = json.loads(resp.body)
+        body = json.loads(resp.get_body())
         self.assertEqual(body["status"], "Bypassed")
         self.assertIn("Critical-Infrastructure", body["Reason"])
 
