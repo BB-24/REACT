@@ -1,83 +1,9 @@
 """Unit tests for NetworkContainment Azure Function logic."""
 
-import importlib.util
 import json
-import sys
 import unittest
 import unittest.mock
-from types import ModuleType
 from unittest.mock import MagicMock
-
-
-def _azure_sdk_missing() -> bool:
-    """True when the real azure-functions SDK is not importable here.
-
-    ``sys.modules`` is empty before anything imports azure, so checking it
-    alone would let these stubs shadow an installed SDK and break submodule
-    imports such as ``azure.mgmt.network.models``.
-    """
-    try:
-        return importlib.util.find_spec("azure.functions") is None
-    except ImportError:
-        return True
-
-
-# Stub azure modules only if the real SDK is not installed in this environment.
-if _azure_sdk_missing():
-    azure_mod = ModuleType("azure")
-    func_mod = ModuleType("azure.functions")
-
-    class FakeHttpRequest:
-        def __init__(self, method: str, url: str, body: bytes, headers: dict):
-            self.method = method
-            self.url = url
-            self._body = body
-            self.headers = headers
-
-        def get_json(self):
-            return json.loads(self._body.decode("utf-8"))
-
-    class FakeHttpResponse:
-        def __init__(
-            self, body: str, *, status_code: int = 200, mimetype: str = "application/json"
-        ):
-            self.body = body
-            self.status_code = status_code
-            self.mimetype = mimetype
-
-        def get_body(self):
-            # Mirrors the real azure.functions API, which returns bytes.
-            return self.body.encode("utf-8") if isinstance(self.body, str) else self.body
-
-    class FakeBlueprint:
-        """Stand-in for azure.functions.Blueprint supporting @bp.route(...)."""
-
-        def __init__(self, *args, **kwargs):
-            self.routes = []
-
-        def route(self, *args, **kwargs):
-            def decorator(func):
-                self.routes.append((args, kwargs))
-                return func
-
-            return decorator
-
-    func_mod.HttpRequest = FakeHttpRequest
-    func_mod.HttpResponse = FakeHttpResponse
-    func_mod.Blueprint = FakeBlueprint
-    azure_mod.functions = func_mod
-
-    sys.modules["azure"] = azure_mod
-    sys.modules["azure.functions"] = func_mod
-    sys.modules["azure.identity"] = MagicMock()
-    sys.modules["azure.mgmt"] = MagicMock()
-    sys.modules["azure.mgmt.network"] = MagicMock()
-    # ``azure.mgmt.network`` is a MagicMock (not a package), so submodule imports
-    # like ``from azure.mgmt.network.models import NetworkSecurityGroup`` fail
-    # unless the submodule is registered explicitly. Same for compute.models.
-    sys.modules["azure.mgmt.network.models"] = MagicMock()
-    sys.modules["azure.mgmt.compute"] = MagicMock()
-    sys.modules["azure.mgmt.compute.models"] = MagicMock()
 
 import azure.functions as func
 
