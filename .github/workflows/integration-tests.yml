@@ -95,7 +95,7 @@ jobs:
               pytest tests/integration/e2e/ -v --junitxml=junit/e2e-results-${{ matrix.python-version }}.xml
               ;;
             all|*)
-              pytest tests/ -v --cov=src/functions --cov-report=xml:coverage.xml --junitxml=junit/all-results-${{ matrix.python-version }}.xml
+              pytest tests/ src/functions/tests/ -v --cov=src/functions --cov-report=xml:coverage.xml --junitxml=junit/all-results-${{ matrix.python-version }}.xml
               ;;
           esac
 

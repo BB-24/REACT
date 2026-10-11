@@ -20,3 +20,9 @@ Thumbs.db
 *.tfstate.backup
 # Node.js dependencies
 node_modules/
+
+# Test & coverage artifacts
+.coverage
+coverage.xml
+coverage_html/
+junit/

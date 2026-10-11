@@ -1,45 +1,9 @@
 """Unit tests for NetworkContainment Azure Function logic."""
 
 import json
-import sys
 import unittest
 import unittest.mock
-from types import ModuleType
 from unittest.mock import MagicMock
-
-# Stub azure modules if not installed in local environment
-if "azure" not in sys.modules:
-    azure_mod = ModuleType("azure")
-    func_mod = ModuleType("azure.functions")
-
-    class FakeHttpRequest:
-        def __init__(self, method: str, url: str, body: bytes, headers: dict):
-            self.method = method
-            self.url = url
-            self._body = body
-            self.headers = headers
-
-        def get_json(self):
-            return json.loads(self._body.decode("utf-8"))
-
-    class FakeHttpResponse:
-        def __init__(
-            self, body: str, *, status_code: int = 200, mimetype: str = "application/json"
-        ):
-            self.body = body
-            self.status_code = status_code
-            self.mimetype = mimetype
-
-    func_mod.HttpRequest = FakeHttpRequest
-    func_mod.HttpResponse = FakeHttpResponse
-    azure_mod.functions = func_mod
-
-    sys.modules["azure"] = azure_mod
-    sys.modules["azure.functions"] = func_mod
-    sys.modules["azure.identity"] = MagicMock()
-    sys.modules["azure.mgmt"] = MagicMock()
-    sys.modules["azure.mgmt.network"] = MagicMock()
-    sys.modules["azure.mgmt.compute"] = MagicMock()
 
 import azure.functions as func
 
@@ -156,7 +120,7 @@ class TestNetworkContainment(unittest.TestCase):
 
         req = self._make_request(self.valid_payload)
         resp = main(req)
-        body = json.loads(resp.body)
+        body = json.loads(resp.get_body())
 
         self.assertEqual(body["status"], "Bypassed")
         self.assertIn("Critical-Infrastructure", body.get("Reason", ""))
@@ -196,7 +160,7 @@ class TestNetworkContainment(unittest.TestCase):
 
         req = self._make_request(self.valid_payload)
         resp = main(req)
-        body = json.loads(resp.body)
+        body = json.loads(resp.get_body())
 
         self.assertEqual(body["status"], "Contained")
         self.assertFalse(body["CriticalInfrastructureBypass"])

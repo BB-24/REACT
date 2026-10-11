@@ -16,7 +16,7 @@ the unit tests.
 import hashlib
 import json
 import threading
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 # Two subscriptions, because REQ-3.4.3 is specifically about crossing the
 # boundary between them: the attacker may hold Contributor on the first.
@@ -44,7 +44,7 @@ _LOCK = threading.RLock()
 
 
 def utcnow():
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 class Model:

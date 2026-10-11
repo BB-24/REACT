@@ -39,7 +39,7 @@ class MockLogicAppEngine:
             headers={"Content-Type": "application/json"},
         )
         containment_resp = self.containment_func(req)
-        containment_data = json.loads(containment_resp.body)
+        containment_data = json.loads(containment_resp.get_body())
         self.execution_log.append(
             (
                 "Call_Network_Containment",
