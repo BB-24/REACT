@@ -14,10 +14,12 @@ def _azure_sdk_missing() -> bool:
     imports azure, which would make these stubs shadow an *installed* SDK in CI
     and break submodule imports such as ``azure.mgmt.network.models``.
     """
+    if "azure.functions" in sys.modules:
+        return False
     try:
         return importlib.util.find_spec("azure.functions") is None
-    except ImportError:
-        # Parent package missing entirely -> genuinely unavailable.
+    except (ImportError, ValueError):
+        # Parent package missing entirely or stubbed -> genuinely unavailable.
         return True
 
 
@@ -87,7 +89,39 @@ if _azure_sdk_missing():
             pass
 
     def fake_generate_blob_sas(*args, **kwargs):
-        return "sv=2024-05-04&sr=b&sig=fake_sas_signature_123456"
+        parts = ["sv=2024-05-04", "sr=b"]
+        perm = kwargs.get("permission")
+        if perm:
+            sp = []
+            if getattr(perm, "read", False):
+                sp.append("r")
+            if getattr(perm, "add", False):
+                sp.append("a")
+            if getattr(perm, "create", False):
+                sp.append("c")
+            if getattr(perm, "write", False):
+                sp.append("w")
+            if getattr(perm, "delete", False):
+                sp.append("d")
+            parts.append(f"sp={''.join(sp)}")
+        if "start" in kwargs:
+            st = (
+                kwargs["start"].strftime("%Y-%m-%dT%H:%M:%SZ")
+                if hasattr(kwargs["start"], "strftime")
+                else str(kwargs["start"])
+            )
+            parts.append(f"st={st}")
+        if "expiry" in kwargs:
+            se = (
+                kwargs["expiry"].strftime("%Y-%m-%dT%H:%M:%SZ")
+                if hasattr(kwargs["expiry"], "strftime")
+                else str(kwargs["expiry"])
+            )
+            parts.append(f"se={se}")
+        if "protocol" in kwargs:
+            parts.append(f"spr={kwargs['protocol']}")
+        parts.append("sig=fake_sas_signature_123456")
+        return "&".join(parts)
 
     func_mod.HttpRequest = FakeHttpRequest
     func_mod.HttpResponse = FakeHttpResponse
