@@ -14,9 +14,11 @@ def _azure_sdk_missing() -> bool:
     imports azure, which would make these stubs shadow an *installed* SDK in CI
     and break submodule imports such as ``azure.mgmt.network.models``.
     """
+    if "azure.functions" in sys.modules:
+        return False
     try:
         return importlib.util.find_spec("azure.functions") is None
-    except ImportError:
+    except (ImportError, ValueError):
         # Parent package missing entirely -> genuinely unavailable.
         return True
 
@@ -87,7 +89,31 @@ if _azure_sdk_missing():
             pass
 
     def fake_generate_blob_sas(*args, **kwargs):
-        return "sv=2024-05-04&sr=b&sig=fake_sas_signature_123456"
+        perm = kwargs.get("permission")
+        sp_str = ""
+        if perm:
+            parts = []
+            if getattr(perm, "read", False):
+                parts.append("r")
+            if getattr(perm, "add", False):
+                parts.append("a")
+            if getattr(perm, "create", False):
+                parts.append("c")
+            if getattr(perm, "write", False):
+                parts.append("w")
+            if getattr(perm, "delete", False):
+                parts.append("d")
+            if getattr(perm, "list", False):
+                parts.append("l")
+            sp_str = "".join(parts)
+        st = kwargs.get("start")
+        st_str = st.isoformat() if st else ""
+        se = kwargs.get("expiry")
+        se_str = se.isoformat() if se else ""
+        spr = kwargs.get("protocol", "https")
+        if hasattr(spr, "to_string"):
+            spr = spr.to_string()
+        return f"sv=2024-05-04&sr=b&sp={sp_str}&st={st_str}&se={se_str}&spr={spr}&sig=fake_sas_signature_123456"
 
     func_mod.HttpRequest = FakeHttpRequest
     func_mod.HttpResponse = FakeHttpResponse
