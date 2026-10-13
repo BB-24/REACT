@@ -19,7 +19,7 @@ def _azure_sdk_missing() -> bool:
     try:
         return importlib.util.find_spec("azure.functions") is None
     except (ImportError, ValueError):
-        # Parent package missing entirely -> genuinely unavailable.
+        # Parent package missing entirely or stubbed -> genuinely unavailable.
         return True
 
 
@@ -89,31 +89,52 @@ if _azure_sdk_missing():
             pass
 
     def fake_generate_blob_sas(*args, **kwargs):
+        parts = ["sv=2024-05-04", "sr=b"]
         perm = kwargs.get("permission")
-        sp_str = ""
         if perm:
-            parts = []
+            sp = []
             if getattr(perm, "read", False):
-                parts.append("r")
+                sp.append("r")
             if getattr(perm, "add", False):
-                parts.append("a")
+                sp.append("a")
             if getattr(perm, "create", False):
-                parts.append("c")
+                sp.append("c")
             if getattr(perm, "write", False):
-                parts.append("w")
+                sp.append("w")
             if getattr(perm, "delete", False):
-                parts.append("d")
+                sp.append("d")
             if getattr(perm, "list", False):
-                parts.append("l")
-            sp_str = "".join(parts)
-        st = kwargs.get("start")
-        st_str = st.isoformat() if st else ""
-        se = kwargs.get("expiry")
-        se_str = se.isoformat() if se else ""
-        spr = kwargs.get("protocol", "https")
-        if hasattr(spr, "to_string"):
-            spr = spr.to_string()
-        return f"sv=2024-05-04&sr=b&sp={sp_str}&st={st_str}&se={se_str}&spr={spr}&sig=fake_sas_signature_123456"
+                sp.append("l")
+            parts.append(f"sp={''.join(sp)}")
+        if "start" in kwargs and kwargs["start"] is not None:
+            st = (
+                kwargs["start"].strftime("%Y-%m-%dT%H:%M:%SZ")
+                if hasattr(kwargs["start"], "strftime")
+                else (
+                    kwargs["start"].isoformat()
+                    if hasattr(kwargs["start"], "isoformat")
+                    else str(kwargs["start"])
+                )
+            )
+            parts.append(f"st={st}")
+        if "expiry" in kwargs and kwargs["expiry"] is not None:
+            se = (
+                kwargs["expiry"].strftime("%Y-%m-%dT%H:%M:%SZ")
+                if hasattr(kwargs["expiry"], "strftime")
+                else (
+                    kwargs["expiry"].isoformat()
+                    if hasattr(kwargs["expiry"], "isoformat")
+                    else str(kwargs["expiry"])
+                )
+            )
+            parts.append(f"se={se}")
+        if "protocol" in kwargs and kwargs["protocol"] is not None:
+            spr = kwargs["protocol"]
+            if hasattr(spr, "to_string"):
+                spr = spr.to_string()
+            parts.append(f"spr={spr}")
+        parts.append("sig=fake_sas_signature_123456")
+        return "&".join(parts)
 
     func_mod.HttpRequest = FakeHttpRequest
     func_mod.HttpResponse = FakeHttpResponse
