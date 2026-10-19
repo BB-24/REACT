@@ -44,6 +44,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FORENSIC_WORKSPACE="/workspace"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    plaso \
     sleuthkit \
     binutils \
     p7zip-full \
@@ -62,11 +63,12 @@ RUN groupadd -r dfiruser && useradd -r -g dfiruser -d /workspace -s /bin/bash df
     && chown -R dfiruser:dfiruser /workspace
 
 WORKDIR /workspace
+COPY --chown=dfiruser:dfiruser entrypoint.sh /usr/local/bin/forensic-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/forensic-entrypoint.sh
 USER dfiruser
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python3 -c "import volatility3, yara, pytsk3; print('DFIR tools OK')" || exit 1
 
-ENTRYPOINT ["python3"]
-CMD ["-c", "print('DFIR SIFT Forensic Analyzer ready.')"]
+ENTRYPOINT ["/usr/local/bin/forensic-entrypoint.sh"]
