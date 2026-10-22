@@ -22,6 +22,7 @@ WORKDIR /install
 
 # Install core DFIR Python packages
 RUN pip install --prefix=/install --no-warn-script-location \
+    plaso \
     volatility3 \
     yara-python \
     pefile \
@@ -44,7 +45,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FORENSIC_WORKSPACE="/workspace"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    plaso \
     sleuthkit \
     binutils \
     p7zip-full \

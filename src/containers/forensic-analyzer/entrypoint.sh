@@ -6,8 +6,8 @@ INPUT_DIR="${FORENSIC_INPUT_DIR:-/workspace/input}"
 OUTPUT_DIR="${FORENSIC_OUTPUT_DIR:-/workspace/output}"
 TIMELINE_PATH="${FORENSIC_TIMELINE_PATH:-${OUTPUT_DIR}/timeline.json}"
 STORAGE_PATH="${FORENSIC_STORAGE_PATH:-/tmp/plaso/timeline.plaso}"
-LOG2TIMELINE_BIN="${LOG2TIMELINE_BIN:-log2timeline.py}"
-PSORT_BIN="${PSORT_BIN:-psort.py}"
+LOG2TIMELINE_BIN="${LOG2TIMELINE_BIN:-log2timeline}"
+PSORT_BIN="${PSORT_BIN:-psort}"
 PLASO_PARSERS="${PLASO_PARSERS:-amcache,bash_history,bencode,binary_cookies,esedb,filestat,lnk,mft,olecf,pe,prefetch,recycle_bin,sqlite,syslog,usnjrnl,winevt,winevtx,winjob,winreg}"
 
 log() {
@@ -31,7 +31,7 @@ run_log2timeline() {
     )
     cmd+=("${sources[@]}")
 
-    log "Running log2timeline.py with ${#sources[@]} evidence source(s)."
+    log "Running ${LOG2TIMELINE_BIN} with ${#sources[@]} evidence source(s)."
     "${cmd[@]}"
 }
 
@@ -53,14 +53,14 @@ main() {
     fi
 
     if ! run_log2timeline "${evidence_sources[@]}"; then
-        fail "log2timeline.py failed while processing evidence from ${INPUT_DIR}"
+        fail "${LOG2TIMELINE_BIN} failed while processing evidence from ${INPUT_DIR}"
     fi
     if [[ ! -s "${STORAGE_PATH}" ]]; then
         fail "Plaso storage file was not created: ${STORAGE_PATH}"
     fi
 
     if ! run_psort; then
-        fail "psort.py failed while exporting timeline JSON"
+        fail "${PSORT_BIN} failed while exporting timeline JSON"
     fi
     if [[ ! -s "${TIMELINE_PATH}" ]]; then
         fail "Timeline output is missing or empty: ${TIMELINE_PATH}"
