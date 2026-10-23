@@ -2,8 +2,16 @@
 
 import os
 import pathlib
+import shutil
 import stat
 import subprocess
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("bash") is None,
+    reason="bash executable not available in environment",
+)
 
 
 def _write_executable(path: pathlib.Path, content: str) -> None:
