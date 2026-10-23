@@ -57,9 +57,13 @@ if _azure_sdk_missing():
 
         def __init__(self, *args, **kwargs):
             self.routes = []
+            self._registered_funcs = set()
 
         def route(self, *args, **kwargs):
             def decorator(func):
+                if func in self._registered_funcs:
+                    raise ValueError("A trigger was already registered to this function")
+                self._registered_funcs.add(func)
                 self.routes.append((args, kwargs))
                 return func
 

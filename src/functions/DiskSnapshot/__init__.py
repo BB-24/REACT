@@ -385,7 +385,6 @@ def _json_response(status_code, body):
 
 
 @bp.route(route="snapshot", methods=["POST"])
-@bp.route(route="DiskSnapshotAcquisition", methods=["POST"])
 def disk_snapshot(req: func.HttpRequest) -> func.HttpResponse:
     try:
         return handle_snapshot(req)
@@ -395,3 +394,8 @@ def disk_snapshot(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as error:  # noqa: BLE001 - the Logic App needs a verdict
         logging.exception("Disk snapshotting failed.")
         return _json_response(500, {"error": f"Disk snapshotting failed: {error}"})
+
+
+@bp.route(route="DiskSnapshotAcquisition", methods=["POST"])
+def disk_snapshot_legacy(req: func.HttpRequest) -> func.HttpResponse:
+    return disk_snapshot(req)
