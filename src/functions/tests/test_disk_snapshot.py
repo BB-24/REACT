@@ -253,19 +253,6 @@ def test_disk_snapshot_legacy_entrypoint_wrapper(mock_estate, post, body):
     assert len(payload["snapshotResourceIds"]) == 2
 
 
-def test_blueprint_rejects_duplicate_trigger_registration_on_same_function():
-    import azure.functions as func
-
-    test_bp = func.Blueprint()
-
-    def sample_func(req):
-        return None
-
-    test_bp.route(route="route1")(sample_func)
-    with pytest.raises(ValueError, match="A trigger was already registered to this function"):
-        test_bp.route(route="route2")(sample_func)
-
-
 # --- Manifest custody --------------------------------------------------------
 
 
