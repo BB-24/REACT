@@ -6,12 +6,14 @@ Registers the MemoryAcquisition blueprint (SOP 2 Phase 2).
 import logging
 
 import azure.functions as func
+from DiskSnapshot import bp as disk_snapshot_bp
 from MemoryAcquisition import bp as memory_acquisition_bp
 from shared import clients
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 app.register_blueprint(memory_acquisition_bp)
+app.register_blueprint(disk_snapshot_bp)
 
 if clients.mock_mode():
     logging.info("Mock mode active for MemoryAcquisition endpoint.")
