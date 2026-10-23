@@ -71,7 +71,12 @@ class TestPerson2WormStorage(unittest.TestCase):
     def test_task_2_5_immutability_blocks_overwriting_and_deleting(self):
         """REQ-3.5.1: Immutability / legal hold blocks any modification or deletion of evidence."""
         estate = mocks.world()
-        for name in [MEMORY_DUMPS_CONTAINER, DISK_SNAPSHOTS_CONTAINER, ANALYSIS_OUTPUT_CONTAINER, REPORTS_CONTAINER]:
+        for name in [
+            MEMORY_DUMPS_CONTAINER,
+            DISK_SNAPSHOTS_CONTAINER,
+            ANALYSIS_OUTPUT_CONTAINER,
+            REPORTS_CONTAINER,
+        ]:
             blob_path = f"INC-2026-P2-05/{name}/test-data.bin"
             estate.put_blob(EVIDENCE_ACCOUNT, name, blob_path, b"authentic-evidence-content")
 

@@ -95,9 +95,7 @@ def test_worm_containers_prevent_overwrite_under_legal_hold_and_retention(
         EVIDENCE_CONTAINER,
     ],
 )
-def test_worm_containers_prevent_delete_under_legal_hold_and_retention(
-    mock_estate, container_name
-):
+def test_worm_containers_prevent_delete_under_legal_hold_and_retention(mock_estate, container_name):
     """An attacker or compromised component cannot delete evidence under WORM/Legal Hold."""
     blob_name = f"INC-2026-TEST/{container_name}-artifact.raw"
     mock_estate.put_blob(EVIDENCE_ACCOUNT, container_name, blob_name, b"initial-authentic-data")
@@ -111,9 +109,7 @@ def test_worm_containers_prevent_delete_under_legal_hold_and_retention(
 def test_tool_repository_remains_mutable(mock_estate):
     """Verify tool repository does not block updates as tool binaries rotate."""
     mock_estate.put_blob(EVIDENCE_ACCOUNT, TOOLS_CONTAINER, "winpmem.exe", b"v2")
-    assert (
-        mock_estate.get_blob(EVIDENCE_ACCOUNT, TOOLS_CONTAINER, "winpmem.exe").data == b"v2"
-    )
+    assert mock_estate.get_blob(EVIDENCE_ACCOUNT, TOOLS_CONTAINER, "winpmem.exe").data == b"v2"
 
 
 # --- Infrastructure Bicep / ARM Template Validation --------------------------
