@@ -21,22 +21,51 @@ fail() {
 
 run_log2timeline() {
     local -a sources=("$@")
-    local -a cmd=(
+
+    # If configured parsers are specified and not 'default', attempt configured parsers first
+    if [[ -n "${PLASO_PARSERS:-}" && "${PLASO_PARSERS}" != "default" ]]; then
+        local -a configured_cmd=(
+            "${LOG2TIMELINE_BIN}"
+            --parsers "${PLASO_PARSERS}"
+            --partitions all
+            --vss_stores all
+            --status_view none
+            --storage-file "${STORAGE_PATH}"
+        )
+        configured_cmd+=("${sources[@]}")
+
+        log "Running ${LOG2TIMELINE_BIN} using configured parsers mode: ${PLASO_PARSERS}"
+        if "${configured_cmd[@]}"; then
+            log "Extraction completed successfully using configured parsers mode."
+            return 0
+        fi
+
+        log "WARNING: ${LOG2TIMELINE_BIN} failed with configured parsers (${PLASO_PARSERS}). Safely retrying using Plaso default parser set mode..."
+        rm -f "${STORAGE_PATH}"
+    fi
+
+    # Fallback or default execution: run without --parsers to use Plaso's default parser set
+    local -a default_cmd=(
         "${LOG2TIMELINE_BIN}"
-        --parsers "${PLASO_PARSERS}"
         --partitions all
         --vss_stores all
         --status_view none
         --storage-file "${STORAGE_PATH}"
     )
-    cmd+=("${sources[@]}")
+    default_cmd+=("${sources[@]}")
 
-    log "Running ${LOG2TIMELINE_BIN} with ${#sources[@]} evidence source(s)."
-    "${cmd[@]}"
+    log "Running ${LOG2TIMELINE_BIN} using Plaso default parser set mode."
+    if "${default_cmd[@]}"; then
+        log "Extraction completed successfully using Plaso default parser set mode."
+        return 0
+    fi
+
+    log "ERROR: ${LOG2TIMELINE_BIN} failed in both configured and default parser modes."
+    return 1
 }
 
 run_psort() {
-    log "Running psort.py and writing JSON timeline to ${TIMELINE_PATH}."
+    log "Running ${PSORT_BIN} and writing JSON timeline to ${TIMELINE_PATH}."
     "${PSORT_BIN}" -o json_line --status_view none -w "${TIMELINE_PATH}" "${STORAGE_PATH}"
 }
 
