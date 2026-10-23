@@ -179,6 +179,26 @@ ruff format src/ tests/
 
 ---
 
+### 3.7 Forensic Analyzer Container (Plaso Timeline)
+
+Build the forensic analyzer image:
+```bash
+docker build -t react-forensic-analyzer src/containers/forensic-analyzer
+```
+
+Run timeline extraction with evidence mounted read-only at `/workspace/input`:
+```bash
+docker run --rm \
+  -v "$(pwd)/evidence:/workspace/input:ro" \
+  -v "$(pwd)/output:/workspace/output" \
+  react-forensic-analyzer
+```
+
+On success, the container writes timeline output to:
+`/workspace/output/timeline.json`
+
+---
+
 ## 4. Continuous Integration (CI/CD)
 
 The test suite runs automatically on GitHub Actions in two workflows:
