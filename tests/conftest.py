@@ -103,23 +103,36 @@ if _azure_sdk_missing():
                 sp.append("w")
             if getattr(perm, "delete", False):
                 sp.append("d")
+            if getattr(perm, "list", False):
+                sp.append("l")
             parts.append(f"sp={''.join(sp)}")
-        if "start" in kwargs:
+        if "start" in kwargs and kwargs["start"] is not None:
             st = (
                 kwargs["start"].strftime("%Y-%m-%dT%H:%M:%SZ")
                 if hasattr(kwargs["start"], "strftime")
-                else str(kwargs["start"])
+                else (
+                    kwargs["start"].isoformat()
+                    if hasattr(kwargs["start"], "isoformat")
+                    else str(kwargs["start"])
+                )
             )
             parts.append(f"st={st}")
-        if "expiry" in kwargs:
+        if "expiry" in kwargs and kwargs["expiry"] is not None:
             se = (
                 kwargs["expiry"].strftime("%Y-%m-%dT%H:%M:%SZ")
                 if hasattr(kwargs["expiry"], "strftime")
-                else str(kwargs["expiry"])
+                else (
+                    kwargs["expiry"].isoformat()
+                    if hasattr(kwargs["expiry"], "isoformat")
+                    else str(kwargs["expiry"])
+                )
             )
             parts.append(f"se={se}")
-        if "protocol" in kwargs:
-            parts.append(f"spr={kwargs['protocol']}")
+        if "protocol" in kwargs and kwargs["protocol"] is not None:
+            spr = kwargs["protocol"]
+            if hasattr(spr, "to_string"):
+                spr = spr.to_string()
+            parts.append(f"spr={spr}")
         parts.append("sig=fake_sas_signature_123456")
         return "&".join(parts)
 
