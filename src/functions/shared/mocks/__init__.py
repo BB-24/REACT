@@ -21,7 +21,9 @@ from ._sql import MockSqlConnection
 from ._sql import connect as sql_connect
 from ._storage import MockBlobClient, MockBlobServiceClient
 from ._world import (
+    ANALYSIS_OUTPUT_CONTAINER,
     COMPROMISED_SUBSCRIPTION,
+    DISK_SNAPSHOTS_CONTAINER,
     ENCLAVE_RESOURCE_GROUP,
     ENCLAVE_SUBSCRIPTION,
     EVIDENCE_ACCOUNT,
@@ -29,9 +31,12 @@ from ._world import (
     FAKE_ACCOUNT_KEY,
     KEY_VAULT_URI,
     LOGIC_APP_PRINCIPAL_ID,
+    MEMORY_DUMPS_CONTAINER,
+    REPORTS_CONTAINER,
     STORAGE_KEY_SECRET_NAME,
     TARGET_RESOURCE_GROUP,
     TOOLS_CONTAINER,
+    WORM_CONTAINERS,
     ImmutabilityError,
     MockAzureError,
     Model,
@@ -120,8 +125,10 @@ def snapshot_state():
 
 
 __all__ = [
+    "ANALYSIS_OUTPUT_CONTAINER",
     "COMPROMISED_SUBSCRIPTION",
     "DEFAULT_IMAGE_BYTES",
+    "DISK_SNAPSHOTS_CONTAINER",
     "ENCLAVE_RESOURCE_GROUP",
     "ENCLAVE_SUBSCRIPTION",
     "EVIDENCE_ACCOUNT",
@@ -129,9 +136,12 @@ __all__ = [
     "FAKE_ACCOUNT_KEY",
     "KEY_VAULT_URI",
     "LOGIC_APP_PRINCIPAL_ID",
+    "MEMORY_DUMPS_CONTAINER",
+    "REPORTS_CONTAINER",
     "STORAGE_KEY_SECRET_NAME",
     "TARGET_RESOURCE_GROUP",
     "TOOLS_CONTAINER",
+    "WORM_CONTAINERS",
     "ImmutabilityError",
     "MockAzureError",
     "MockBlobClient",

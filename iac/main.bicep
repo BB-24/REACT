@@ -81,7 +81,30 @@ param targetResourceGroup string = ''
 @description('Deploy with the mock estate enabled. Never true for a real enclave.')
 param enableMockMode bool = false
 
+@description('Optional existing Virtual Network name. If empty, a dedicated enclave VNet is derived from namePrefix.')
+param vnetName string = ''
+
+@description('Subnet name for the private endpoints.')
+param subnetName string = 'Forensic-Enclave-Subnet'
+
+@description('Address prefix for the forensic enclave VNet.')
+param vnetAddressPrefix string = '10.240.0.0/16'
+
+@description('Address prefix for the forensic enclave subnet.')
+param subnetAddressPrefix string = '10.240.1.0/24'
+
+@description('Optional existing subnet resource ID for private endpoints. If empty, a dedicated enclave VNet and subnet will be created.')
+param privateEndpointSubnetId string = ''
+
+@description('Public network access for the forensic storage account. Default is Disabled (access restricted to Private Endpoints and trusted Azure services).')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param storagePublicNetworkAccess string = 'Disabled'
+
 var suffix = uniqueString(resourceGroup().id)
+var actualVnetName = empty(vnetName) ? '${namePrefix}-vnet-${substring(suffix, 0, 8)}' : vnetName
 var storageAccountName = toLower('${namePrefix}enc${substring(suffix, 0, 8)}')
 var keyVaultName = '${namePrefix}-kv-${substring(suffix, 0, 8)}'
 var functionAppName = '${namePrefix}-fn-${substring(suffix, 0, 8)}'
@@ -129,14 +152,12 @@ resource evidenceStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowSharedKeyAccess: true // Required only for SAS_MODE=key-vault; see note.
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: storagePublicNetworkAccess
     networkAcls: {
-      // The compromised VM must be able to reach this account to stream its
-      // memory image out, so the account cannot be fully private. Egress from
-      // the target is already narrowed to the Storage service tag by the
-      // isolation NSG that NetworkContainment builds.
+      // When storagePublicNetworkAccess is Disabled, access is mediated via
+      // Private Endpoints on the Forensic-Enclave-Subnet, with trusted Azure services bypassed.
       bypass: 'AzureServices'
-      defaultAction: 'Allow'
+      defaultAction: storagePublicNetworkAccess == 'Enabled' ? 'Allow' : 'Deny'
     }
   }
   tags: {
@@ -156,6 +177,7 @@ resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01
   }
 }
 
+// Primary evidence container
 resource evidenceContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobServices
   name: evidenceContainerName
@@ -166,6 +188,63 @@ resource evidenceContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
     }
     metadata: {
       purpose: 'chain-of-custody-evidence'
+    }
+  }
+}
+
+// P2-5 Required WORM containers
+resource memoryDumpsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobServices
+  name: 'memory-dumps'
+  properties: {
+    publicAccess: 'None'
+    immutableStorageWithVersioning: {
+      enabled: true
+    }
+    metadata: {
+      purpose: 'volatile-memory-dumps'
+    }
+  }
+}
+
+resource diskSnapshotsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobServices
+  name: 'disk-snapshots'
+  properties: {
+    publicAccess: 'None'
+    immutableStorageWithVersioning: {
+      enabled: true
+    }
+    metadata: {
+      purpose: 'disk-snapshots'
+    }
+  }
+}
+
+resource analysisOutputContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobServices
+  name: 'analysis-output'
+  properties: {
+    publicAccess: 'None'
+    immutableStorageWithVersioning: {
+      enabled: true
+    }
+    metadata: {
+      purpose: 'forensic-analysis-output'
+    }
+  }
+}
+
+resource reportsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobServices
+  name: 'reports'
+  properties: {
+    publicAccess: 'None'
+    immutableStorageWithVersioning: {
+      enabled: true
+    }
+    metadata: {
+      purpose: 'forensic-investigation-reports'
     }
   }
 }
@@ -184,18 +263,53 @@ resource toolsContainer 'Microsoft.Storage/storageAccounts/blobServices/containe
   }
 }
 
-resource retentionPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = {
+// 7-year time-based immutability policies (2555 days) across all required evidence containers (REQ-3.5.1 / P2-5)
+resource evidenceRetentionPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = {
   parent: evidenceContainer
   name: 'default'
   properties: {
     immutabilityPeriodSinceCreationInDays: retentionDays
-    // Blobs must be hashable the instant they land, so reads during the
-    // acquisition window cannot be blocked by the policy.
     allowProtectedAppendWrites: false
   }
 }
 
-// --- Legal hold (REQ-3.5.1) --------------------------------------------------
+resource memoryDumpsRetentionPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = {
+  parent: memoryDumpsContainer
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: retentionDays
+    allowProtectedAppendWrites: false
+  }
+}
+
+resource diskSnapshotsRetentionPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = {
+  parent: diskSnapshotsContainer
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: retentionDays
+    allowProtectedAppendWrites: false
+  }
+}
+
+resource analysisOutputRetentionPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = {
+  parent: analysisOutputContainer
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: retentionDays
+    allowProtectedAppendWrites: false
+  }
+}
+
+resource reportsRetentionPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-05-01' = {
+  parent: reportsContainer
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: retentionDays
+    allowProtectedAppendWrites: false
+  }
+}
+
+// --- Legal hold (REQ-3.5.1 / P2-5) -------------------------------------------
 
 // A legal hold is applied through a data-management action (`setLegalHold`),
 // not a declarable resource, so ARM cannot express it directly. This script
@@ -236,28 +350,44 @@ resource applyLegalHold 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     environmentVariables: [
       { name: 'ACCOUNT', value: evidenceStorage.name }
       { name: 'GROUP', value: resourceGroup().name }
-      { name: 'CONTAINER', value: evidenceContainerName }
+      { name: 'CONTAINERS', value: '${evidenceContainerName} memory-dumps disk-snapshots analysis-output reports' }
       { name: 'TAGS', value: join(legalHoldTags, ' ') }
     ]
     scriptContent: '''
       set -euo pipefail
-      # Idempotent: re-running a deployment must not fail on an existing hold.
-      existing=$(az storage container legal-hold show \
-        --account-name "$ACCOUNT" --resource-group "$GROUP" \
-        --container-name "$CONTAINER" --query "tags" -o tsv || echo "")
-      if [ -n "$existing" ]; then
-        echo "Legal hold already present: $existing"
-      else
-        az storage container legal-hold set \
+      for c in $CONTAINERS; do
+        echo "Processing legal hold on container: $c"
+        existing=$(az storage container legal-hold show \
           --account-name "$ACCOUNT" --resource-group "$GROUP" \
-          --container-name "$CONTAINER" --tags $TAGS
-        echo "Legal hold applied: $TAGS"
-      fi
+          --container-name "$c" --query "tags" -o tsv 2>/dev/null || echo "")
+        if [ -n "$existing" ]; then
+          echo "Legal hold already present on $c: $existing"
+        else
+          az storage container legal-hold set \
+            --account-name "$ACCOUNT" --resource-group "$GROUP" \
+            --container-name "$c" --tags $TAGS
+          echo "Legal hold applied to $c: $TAGS"
+        fi
+
+        # Verify hold is active and fail deployment if not active (prevents false reporting)
+        has_hold=$(az storage container legal-hold show \
+          --account-name "$ACCOUNT" --resource-group "$GROUP" \
+          --container-name "$c" --query "hasLegalHold" -o tsv)
+        if [ "$has_hold" != "true" ]; then
+          echo "ERROR: Legal hold verification failed on container $c" >&2
+          exit 1
+        fi
+      done
+      echo "Legal hold successfully verified on all evidence containers."
     '''
   }
   dependsOn: [
     legalHoldRoleAssignment
-    retentionPolicy
+    evidenceRetentionPolicy
+    memoryDumpsRetentionPolicy
+    diskSnapshotsRetentionPolicy
+    analysisOutputRetentionPolicy
+    reportsRetentionPolicy
   ]
 }
 
@@ -281,29 +411,115 @@ resource lockRetention 'Microsoft.Resources/deploymentScripts@2023-08-01' = if (
     environmentVariables: [
       { name: 'ACCOUNT', value: evidenceStorage.name }
       { name: 'GROUP', value: resourceGroup().name }
-      { name: 'CONTAINER', value: evidenceContainerName }
+      { name: 'CONTAINERS', value: '${evidenceContainerName} memory-dumps disk-snapshots analysis-output reports' }
     ]
     scriptContent: '''
       set -euo pipefail
-      etag=$(az storage container immutability-policy show \
-        --account-name "$ACCOUNT" --resource-group "$GROUP" \
-        --container-name "$CONTAINER" --query etag -o tsv)
-      state=$(az storage container immutability-policy show \
-        --account-name "$ACCOUNT" --resource-group "$GROUP" \
-        --container-name "$CONTAINER" --query state -o tsv)
-      if [ "$state" = "Locked" ]; then
-        echo "Immutability policy already locked."
-      else
-        az storage container immutability-policy lock \
+      for c in $CONTAINERS; do
+        etag=$(az storage container immutability-policy show \
           --account-name "$ACCOUNT" --resource-group "$GROUP" \
-          --container-name "$CONTAINER" --if-match "$etag"
-        echo "Immutability policy locked."
-      fi
+          --container-name "$c" --query etag -o tsv)
+        state=$(az storage container immutability-policy show \
+          --account-name "$ACCOUNT" --resource-group "$GROUP" \
+          --container-name "$c" --query state -o tsv)
+        if [ "$state" = "Locked" ]; then
+          echo "Immutability policy already locked on $c."
+        else
+          az storage container immutability-policy lock \
+            --account-name "$ACCOUNT" --resource-group "$GROUP" \
+            --container-name "$c" --if-match "$etag"
+          echo "Immutability policy locked on $c."
+        fi
+      done
     '''
   }
   dependsOn: [
     applyLegalHold
   ]
+}
+
+// --- Private Endpoints & DNS (REQ-3.5.1 / P2-5) -------------------------------
+
+resource enclaveVnet 'Microsoft.Network/virtualNetworks@2023-11-01' = if (empty(privateEndpointSubnetId)) {
+  name: actualVnetName
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        vnetAddressPrefix
+      ]
+    }
+    subnets: [
+      {
+        name: subnetName
+        properties: {
+          addressPrefix: subnetAddressPrefix
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
+    ]
+  }
+}
+
+var targetSubnetId = empty(privateEndpointSubnetId) ? resourceId('Microsoft.Network/virtualNetworks/subnets', actualVnetName, subnetName) : privateEndpointSubnetId
+
+resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-11-01' = {
+  name: '${evidenceStorage.name}-blob-pe'
+  location: location
+  properties: {
+    subnet: {
+      id: targetSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: '${evidenceStorage.name}-blob-connection'
+        properties: {
+          privateLinkServiceId: evidenceStorage.id
+          groupIds: [
+            'blob'
+          ]
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    enclaveVnet
+  ]
+}
+
+resource blobPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.blob.${environment().suffixes.storage}'
+  location: 'global'
+}
+
+resource blobPrivateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (empty(privateEndpointSubnetId)) {
+  parent: blobPrivateDnsZone
+  name: '${actualVnetName}-link'
+  location: 'global'
+  properties: {
+    virtualNetwork: {
+      id: resourceId('Microsoft.Network/virtualNetworks', actualVnetName)
+    }
+    registrationEnabled: false
+  }
+  dependsOn: [
+    enclaveVnet
+  ]
+}
+
+resource storagePrivateEndpointDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = {
+  parent: storagePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'privatelink-blob-core-windows-net'
+        properties: {
+          privateDnsZoneId: blobPrivateDnsZone.id
+        }
+      }
+    ]
+  }
 }
 
 // --- Key Vault (REQ-3.3.3) ---------------------------------------------------
@@ -605,6 +821,15 @@ output sqlDatabaseName string = ledgerDatabase.name
 output systemTopicName string = systemTopic.name
 output enclaveResourceGroup string = resourceGroup().name
 output enclaveSubscriptionId string = subscription().subscriptionId
+
+// P2-5 Outputs
+output storagePrivateEndpointId string = storagePrivateEndpoint.id
+output storagePrivateEndpointName string = storagePrivateEndpoint.name
+output blobPrivateDnsZoneId string = blobPrivateDnsZone.id
+output memoryDumpsContainer string = memoryDumpsContainer.name
+output diskSnapshotsContainer string = diskSnapshotsContainer.name
+output analysisOutputContainer string = analysisOutputContainer.name
+output reportsContainer string = reportsContainer.name
 
 @description('Grant this identity Network Contributor + Reader + Disk Snapshot rights on the TARGET subscription, and a contained DB user on the ledger database. See iac/scripts/init-sql-ledger.sql.')
 output postDeploymentPrincipal string = functionApp.identity.principalId
