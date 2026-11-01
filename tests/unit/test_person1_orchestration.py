@@ -170,9 +170,9 @@ class TestPerson1Orchestration(unittest.TestCase):
         self.assertEqual(rg, "Test-RG")
         self.assertEqual(name, "vm-01")
 
-    @patch("src.functions.NetworkContainment.DefaultAzureCredential")
-    @patch("src.functions.NetworkContainment.NetworkManagementClient")
-    @patch("azure.mgmt.compute.ComputeManagementClient")
+    @patch("src.functions.NetworkContainment.clients.credential")
+    @patch("src.functions.NetworkContainment.clients.network_client")
+    @patch("src.functions.NetworkContainment.clients.compute_client")
     def test_task_1_2_critical_infrastructure_tag_bypass_execution(
         self, mock_compute, mock_network, mock_cred
     ):

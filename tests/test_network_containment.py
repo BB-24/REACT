@@ -96,9 +96,9 @@ class TestNetworkContainment(unittest.TestCase):
     # Critical-infrastructure tag bypass (TDD – feature not yet in main)
     # ------------------------------------------------------------------
 
-    @unittest.mock.patch("src.functions.NetworkContainment.DefaultAzureCredential", autospec=False)
-    @unittest.mock.patch("src.functions.NetworkContainment.NetworkManagementClient", autospec=False)
-    @unittest.mock.patch("azure.mgmt.compute.ComputeManagementClient", autospec=False)
+    @unittest.mock.patch("src.functions.NetworkContainment.clients.credential")
+    @unittest.mock.patch("src.functions.NetworkContainment.clients.network_client")
+    @unittest.mock.patch("src.functions.NetworkContainment.clients.compute_client")
     def test_critical_infrastructure_tag_bypass(
         self, mock_compute_cls, mock_network_cls, mock_credential_cls
     ):
@@ -127,9 +127,9 @@ class TestNetworkContainment(unittest.TestCase):
         # NSG should *not* have been created.
         mock_network_cls.return_value.network_security_groups.begin_create_or_update.assert_not_called()
 
-    @unittest.mock.patch("src.functions.NetworkContainment.DefaultAzureCredential", autospec=False)
-    @unittest.mock.patch("src.functions.NetworkContainment.NetworkManagementClient", autospec=False)
-    @unittest.mock.patch("azure.mgmt.compute.ComputeManagementClient", autospec=False)
+    @unittest.mock.patch("src.functions.NetworkContainment.clients.credential")
+    @unittest.mock.patch("src.functions.NetworkContainment.clients.network_client")
+    @unittest.mock.patch("src.functions.NetworkContainment.clients.compute_client")
     def test_no_critical_infrastructure_tag_proceeds(
         self, mock_compute_cls, mock_network_cls, mock_credential_cls
     ):

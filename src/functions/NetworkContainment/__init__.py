@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import azure.functions as func
-from azure.identity import DefaultAzureCredential
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.network.models import NetworkSecurityGroup
 from shared import clients, config, sas
@@ -345,16 +344,16 @@ def network_containment(req: func.HttpRequest) -> func.HttpResponse:
         return _json_response(500, {"error": f"Containment failed: {error}"})
 
 
+@bp.route(route="NetworkContainment", methods=["POST"])
+def network_containment_legacy(req: func.HttpRequest) -> func.HttpResponse:
+    return main(req)
+
+
 # ============================================================================
-# Legacy v1 contract (function.json entry point + Person 1 Logic App).
-#
-# ``function.json`` still declares ``__init__.py`` as the script file for the
-# classic Functions host, which resolves the ``main`` entry point, and Person
-# 1's Logic App (``src/logic-apps/workflow.json``) was built against the
-# response contract below (``status`` of ``Contained``/``Bypassed``,
-# ``IsolationNSG``, and the Critical-Infrastructure tag bypass). The helpers
-# above power the v2 blueprint; this section keeps the deployed endpoint and
-# the P1<->P2 contract stable.
+# Person 1 Logic App response contract.
+# The v2 blueprint's legacy route keeps the established
+# ``Contained``/``Bypassed`` response shape while using shared client factories
+# so local mock mode remains safe.
 # ============================================================================
 
 _REQUIRED_FIELDS = {"IncidentID", "TargetVM", "IPAddress", "SubscriptionID", "IncidentSeverity"}
@@ -514,15 +513,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         _, vm_resource_group, vm_name = _resource_parts(
             incident.target_vm, "providers/Microsoft.Compute/virtualMachines"
         )
-        credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
-        network_client = NetworkManagementClient(credential, incident.subscription_id)
-
-        # The compute client is intentionally imported lazily: this keeps the
-        # declared network SDK as the primary dependency while resolving NICs
-        # from the VM's authoritative network profile.
-        from azure.mgmt.compute import ComputeManagementClient
-
-        compute_client = ComputeManagementClient(credential, incident.subscription_id)
+        credential = clients.credential()
+        network_client = clients.network_client(incident.subscription_id, cred=credential)
+        compute_client = clients.compute_client(incident.subscription_id, cred=credential)
         vm = compute_client.virtual_machines.get(vm_resource_group, vm_name)
         nic_id = _primary_nic_id(vm)
 

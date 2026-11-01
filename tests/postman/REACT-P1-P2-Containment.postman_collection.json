@@ -1,0 +1,77 @@
+{
+  "info": {
+    "_postman_id": "ec4c76ea-1445-4db4-b69a-9b41e9fc0098",
+    "name": "REACT P1-P2 Logic App to Network Containment",
+    "description": "Guarded integration test for an isolated demo VM. TestMode returns the Function result without starting acquisition or analysis.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "High-severity Sentinel incident (isolated demo VM only)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const skip = (reason) => {",
+              "  console.error(`Containment request blocked: ${reason}`);",
+              "  pm.execution.skipRequest();",
+              "};",
+              "if (pm.environment.get('allowContainment') !== 'true') {",
+              "  skip(\"set environment variable allowContainment to true only after reviewing the target VM and its current NSG\");",
+              "} else if (!pm.environment.get('logicAppUrl')) {",
+              "  skip('set logicAppUrl to the deployed Incident_Webhook URL');",
+              "} else {",
+              "  const body = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+              "  const target = body.TargetVM.match(/^\\/subscriptions\\/[^/]+\\/resourceGroups\\/([^/]+)\\/providers\\/Microsoft\\.Compute\\/virtualMachines\\/([^/]+)$/i);",
+              "  if (!target || target[1] !== 'rg-react-p1p2-demo' || !target[2].startsWith('react-demo-')) {",
+              "    skip('TargetVM must be a VM named react-demo-* in rg-react-p1p2-demo');",
+              "  } else if (body.TestMode !== true || body.IncidentSeverity !== 'High') {",
+              "    skip('the sample must remain a High severity TestMode request');",
+              "  }",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Logic App returns HTTP 200', () => pm.response.to.have.status(200));",
+              "const result = pm.response.json();",
+              "pm.test('containment completed for the test VM', () => pm.expect(result.status).to.eql('Contained'));",
+              "pm.test('required containment evidence fields are present', () => {",
+              "  pm.expect(result).to.have.property('IsolationNSG').that.is.a('string').and.not.empty;",
+              "  pm.expect(result).to.have.property('PreviousNSGId');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"IncidentID\": \"INC-2026-9001\",\n  \"TargetVM\": \"{{targetVmResourceId}}\",\n  \"IPAddress\": \"203.0.113.25\",\n  \"SubscriptionID\": \"{{subscriptionId}}\",\n  \"IncidentSeverity\": \"High\",\n  \"ResourceGroupName\": \"rg-react-p1p2-demo\",\n  \"TestMode\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{logicAppUrl}}",
+        "description": "Posts the sample incident to the Logic App. The Function attaches an isolation NSG to the VM's primary NIC, which can disconnect it. Use only a disposable demo VM."
+      },
+      "response": []
+    }
+  ],
+  "variable": []
+}

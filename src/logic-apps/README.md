@@ -21,6 +21,14 @@ In Postman, create a `POST` request to the same URL, set `Content-Type` to
 For independently testing the Function endpoint, replace the URL with
 `https://<function-app>.azurewebsites.net/api/NetworkContainment?code=<function-key>`.
 
+For the guarded P1-P2 end-to-end test, import
+[`REACT-P1-P2-Containment.postman_collection.json`](../../tests/postman/REACT-P1-P2-Containment.postman_collection.json)
+and follow the target checks and evidence-export procedure in
+[`docs/p1-p2-postman-evidence.md`](../../docs/p1-p2-postman-evidence.md).
+The collection defaults to blocking execution and is restricted to the named
+disposable demo resource group and VM prefix. Its `TestMode` payload returns
+the containment result without triggering acquisition or analysis.
+
 The Function App identity requires **Network Contributor** over the resource
 group that contains the target NIC and the isolation NSG. Set
 `REGION_NAME` to the NSG region and, when evidence is on Storage Private
