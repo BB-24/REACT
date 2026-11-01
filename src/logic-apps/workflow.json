@@ -5,7 +5,9 @@
     "containmentFunctionUrl": { "type": "String" },
     "acquisitionArmRequestUrl": { "type": "String" },
     "acquisitionStatusUrl": { "type": "String" },
+    "acquisitionStatusAudience": { "type": "String" },
     "analysisPipelineUrl": { "type": "String" },
+    "analysisApiAudience": { "type": "String" },
     "evidenceBlobUriTemplate": { "type": "String" }
   },
   "triggers": {
@@ -28,7 +30,8 @@
             "IPAddress": { "type": "string", "minLength": 1 },
             "SubscriptionID": { "type": "string", "pattern": "^[0-9a-fA-F-]{36}$" },
             "IncidentSeverity": { "type": "string", "enum": ["Low", "Medium", "High", "Critical"] },
-            "ResourceGroupName": { "type": "string" }
+            "ResourceGroupName": { "type": "string" },
+            "TestMode": { "type": "boolean", "description": "Return containment output immediately for an isolated P1-P2 integration test. Use only with a dedicated test VM." }
           },
           "additionalProperties": false
         }
@@ -55,7 +58,8 @@
             "IPAddress": { "type": "string" },
             "SubscriptionID": { "type": "string" },
             "IncidentSeverity": { "type": "string" },
-            "ResourceGroupName": { "type": "string" }
+            "ResourceGroupName": { "type": "string" },
+            "TestMode": { "type": "boolean" }
           }
         }
       },
@@ -78,87 +82,147 @@
             "headers": { "Content-Type": "application/json" },
             "body": "@body('Parse_Incident')"
           },
+          "runtimeConfiguration": {
+            "secureData": { "properties": ["inputs"] }
+          },
           "runAfter": {}
         },
-        "Check_Containment_Success": {
+        "Containment_Test_Mode": {
           "type": "If",
           "expression": {
-            "or": [
-              { "equals": ["@outputs('Call_Network_Containment')['statusCode']", 200] },
-              { "equals": ["@body('Call_Network_Containment')?['status']", "Bypassed"] }
-            ]
+            "equals": ["@body('Parse_Incident')?['TestMode']", true]
           },
           "actions": {
-            "Start_Acquisition_Workflow": {
-              "type": "Http",
+            "Return_Containment_Result": {
+              "type": "Response",
               "inputs": {
-                "method": "POST",
-                "uri": "@parameters('acquisitionArmRequestUrl')",
+                "statusCode": "@coalesce(outputs('Call_Network_Containment')?['statusCode'], 502)",
                 "headers": { "Content-Type": "application/json" },
-                "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" },
-                "body": {
-                  "IncidentID": "@body('Parse_Incident')?['IncidentID']",
-                  "TargetVM": "@body('Parse_Incident')?['TargetVM']",
-                  "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))"
-                }
+                "body": "@coalesce(body('Call_Network_Containment'), json('{\"status\":\"Failed\",\"error\":\"Containment endpoint did not return a response.\"}'))"
               },
               "runAfter": {}
-            },
-            "Wait_For_Evidence_Acquisition": {
-              "type": "Until",
-              "expression": "@equals(body('Get_Acquisition_Status')?['status'], 'Completed')",
-              "limit": { "count": 60, "timeout": "PT2H" },
-              "actions": {
-                "Get_Acquisition_Status": {
-                  "type": "Http",
-                  "inputs": {
-                    "method": "GET",
-                    "uri": "@concat(parameters('acquisitionStatusUrl'), '?incidentId=', encodeUriComponent(body('Parse_Incident')?['IncidentID']))",
-                    "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
-                  },
-                  "runAfter": {}
-                },
-                "Delay_Before_Retry": {
-                  "type": "Wait",
-                  "inputs": { "interval": { "count": 30, "unit": "Second" } },
-                  "runAfter": { "Get_Acquisition_Status": ["Succeeded"] }
-                }
-              },
-              "runAfter": { "Start_Acquisition_Workflow": ["Succeeded"] }
-            },
-            "Start_Analysis_Pipeline": {
-              "type": "Http",
-              "inputs": {
-                "method": "POST",
-                "uri": "@parameters('analysisPipelineUrl')",
-                "headers": { "Content-Type": "application/json" },
-                "body": {
-                  "IncidentID": "@body('Parse_Incident')?['IncidentID']",
-                  "TargetVM": "@body('Parse_Incident')?['TargetVM']",
-                  "IPAddress": "@body('Parse_Incident')?['IPAddress']",
-                  "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
-                  "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
-                  "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))",
-                  "ContainmentDetails": "@body('Call_Network_Containment')",
-                  "PipelineStatus": "AcquisitionCompleted",
-                  "Timestamp": "@{utcNow()}"
-                }
-              },
-              "runAfter": { "Wait_For_Evidence_Acquisition": ["Succeeded"] }
             }
           },
           "else": {
             "actions": {
-              "Record_Containment_Failure": {
-                "type": "Compose",
-                "inputs": {
-                  "IncidentID": "@body('Parse_Incident')?['IncidentID']",
-                  "Error": "Containment function returned non-200 status (not Contained or Bypassed)",
-                  "ContainmentStatus": "@body('Call_Network_Containment')?['status']",
-                  "Details": "@body('Call_Network_Containment')",
-                  "Timestamp": "@{utcNow()}"
+              "Check_Containment_Success": {
+                "type": "If",
+                "expression": {
+                  "or": [
+                    { "equals": ["@outputs('Call_Network_Containment')['statusCode']", 200] },
+                    { "equals": ["@body('Call_Network_Containment')?['status']", "Bypassed"] }
+                  ]
                 },
-                "runAfter": {}
+                "actions": {
+                  "Start_Acquisition_Workflow": {
+                    "type": "Http",
+                    "inputs": {
+                      "method": "POST",
+                      "uri": "@parameters('acquisitionArmRequestUrl')",
+                      "headers": { "Content-Type": "application/json" },
+                      "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" },
+                      "body": {
+                        "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                        "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                        "IPAddress": "@body('Parse_Incident')?['IPAddress']",
+                        "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
+                        "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
+                        "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))"
+                      }
+                    },
+                    "runtimeConfiguration": {
+                      "secureData": { "properties": ["inputs"] }
+                    },
+                    "runAfter": {}
+                  },
+                  "Wait_For_Evidence_Acquisition": {
+                    "type": "Until",
+                    "expression": "@or(equals(body('Get_Acquisition_Status')?['status'], 'Completed'), equals(body('Get_Acquisition_Status')?['status'], 'Failed'))",
+                    "limit": { "count": 240, "timeout": "PT2H" },
+                    "actions": {
+                      "Get_Acquisition_Status": {
+                        "type": "Http",
+                        "inputs": {
+                          "method": "GET",
+                          "uri": "@concat(parameters('acquisitionStatusUrl'), '?incidentId=', encodeUriComponent(body('Parse_Incident')?['IncidentID']))",
+                          "authentication": { "type": "ManagedServiceIdentity", "audience": "@parameters('acquisitionStatusAudience')" }
+                        },
+                        "runtimeConfiguration": {
+                          "secureData": { "properties": ["inputs"] }
+                        },
+                        "runAfter": {}
+                      },
+                      "Delay_Before_Retry": {
+                        "type": "Wait",
+                        "inputs": { "interval": { "count": 30, "unit": "Second" } },
+                        "runAfter": { "Get_Acquisition_Status": ["Succeeded"] }
+                      }
+                    },
+                    "runAfter": { "Start_Acquisition_Workflow": ["Succeeded"] }
+                  },
+                  "Check_Acquisition_Completed": {
+                    "type": "If",
+                    "expression": {
+                      "equals": ["@body('Get_Acquisition_Status')?['status']", "Completed"]
+                    },
+                    "actions": {
+                      "Start_Analysis_Pipeline": {
+                        "type": "Http",
+                        "inputs": {
+                          "method": "POST",
+                          "uri": "@parameters('analysisPipelineUrl')",
+                          "headers": { "Content-Type": "application/json" },
+                          "authentication": { "type": "ManagedServiceIdentity", "audience": "@parameters('analysisApiAudience')" },
+                          "body": {
+                            "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                            "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                            "IPAddress": "@body('Parse_Incident')?['IPAddress']",
+                            "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
+                            "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
+                            "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))",
+                            "ContainmentDetails": "@body('Call_Network_Containment')",
+                            "PipelineStatus": "AcquisitionCompleted",
+                            "Timestamp": "@{utcNow()}"
+                          }
+                        },
+                        "runtimeConfiguration": {
+                          "secureData": { "properties": ["inputs"] }
+                        },
+                        "runAfter": {}
+                      }
+                    },
+                    "else": {
+                      "actions": {
+                        "Record_Acquisition_Failure": {
+                          "type": "Compose",
+                          "inputs": {
+                            "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                            "Error": "Evidence acquisition reported Failed.",
+                            "AcquisitionStatus": "@body('Get_Acquisition_Status')",
+                            "Timestamp": "@{utcNow()}"
+                          },
+                          "runAfter": {}
+                        }
+                      }
+                    },
+                    "runAfter": { "Wait_For_Evidence_Acquisition": ["Succeeded"] }
+                  }
+                },
+                "else": {
+                  "actions": {
+                    "Record_Containment_Failure": {
+                      "type": "Compose",
+                      "inputs": {
+                        "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                        "Error": "Containment function returned non-200 status (not Contained or Bypassed)",
+                        "ContainmentStatus": "@body('Call_Network_Containment')?['status']",
+                        "Details": "@body('Call_Network_Containment')",
+                        "Timestamp": "@{utcNow()}"
+                      },
+                      "runAfter": {}
+                    }
+                  }
+                }
               }
             }
           },

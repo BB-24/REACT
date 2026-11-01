@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.46.1.21595",
-      "templateHash": "6680812470981649334"
+      "version": "0.48.1.52935",
+      "templateHash": "4856296611719037488"
     }
   },
   "parameters": {
@@ -92,11 +92,18 @@
         "description": "Object ID of the Logic App managed identity that triggers the response."
       }
     },
+    "forensicSubscriptionId": {
+      "type": "string",
+      "defaultValue": "[subscription().subscriptionId]",
+      "metadata": {
+        "description": "Subscription ID where this forensic enclave is deployed."
+      }
+    },
     "targetSubscriptionId": {
       "type": "string",
       "defaultValue": "[subscription().subscriptionId]",
       "metadata": {
-        "description": "Subscription containing the VMs under investigation."
+        "description": "Workload subscription containing the VMs under investigation. May differ from this deployment subscription."
       }
     },
     "targetResourceGroup": {
@@ -106,46 +113,32 @@
         "description": "Resource group containing those VMs."
       }
     },
+    "evidenceStoragePrivateEndpointPrefixes": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG."
+      }
+    },
+    "functionIntegrationSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing subnet resource ID delegated to Microsoft.Web/serverFarms for Function App VNet integration. Required when using an existing private endpoint subnet."
+      }
+    },
+    "functionIntegrationSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.250.1.0/24",
+      "metadata": {
+        "description": "Address prefix used for the Function App integration subnet when this template creates the enclave VNet."
+      }
+    },
     "enableMockMode": {
       "type": "bool",
       "defaultValue": false,
       "metadata": {
         "description": "Deploy with the mock estate enabled. Never true for a real enclave."
-      }
-    },
-    "vnetName": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Optional existing Virtual Network name. If empty, a dedicated enclave VNet is derived from namePrefix."
-      }
-    },
-    "subnetName": {
-      "type": "string",
-      "defaultValue": "Forensic-Enclave-Subnet",
-      "metadata": {
-        "description": "Subnet name for the private endpoints."
-      }
-    },
-    "vnetAddressPrefix": {
-      "type": "string",
-      "defaultValue": "10.240.0.0/16",
-      "metadata": {
-        "description": "Address prefix for the forensic enclave VNet."
-      }
-    },
-    "subnetAddressPrefix": {
-      "type": "string",
-      "defaultValue": "10.240.1.0/24",
-      "metadata": {
-        "description": "Address prefix for the forensic enclave subnet."
-      }
-    },
-    "privateEndpointSubnetId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Optional existing subnet resource ID for private endpoints. If empty, a dedicated enclave VNet and subnet will be created."
       }
     },
     "storagePublicNetworkAccess": {
@@ -156,13 +149,33 @@
         "Disabled"
       ],
       "metadata": {
-        "description": "Public network access for the forensic storage account. Default is Disabled (access restricted to Private Endpoints and trusted Azure services)."
+        "description": "Storage account public network access. The Function App is VNet-integrated to the Storage private endpoint."
+      }
+    },
+    "privateEndpointSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing subnet resource ID for the Storage private endpoint. Leave empty to create the enclave VNet and subnet."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.250.0.0/16",
+      "metadata": {
+        "description": "Address prefix used when this template creates the enclave VNet."
+      }
+    },
+    "subnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.250.0.0/24",
+      "metadata": {
+        "description": "Address prefix used for the private-endpoint subnet when this template creates the enclave VNet."
       }
     }
   },
   "variables": {
-    "suffix": "[uniqueString(resourceGroup().id)]",
-    "actualVnetName": "[if(empty(parameters('vnetName')), format('{0}-vnet-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)), parameters('vnetName'))]",
+    "suffix": "[uniqueString(parameters('forensicSubscriptionId'), resourceGroup().id)]",
     "storageAccountName": "[toLower(format('{0}enc{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]",
     "keyVaultName": "[format('{0}-kv-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
     "functionAppName": "[format('{0}-fn-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
@@ -171,10 +184,14 @@
     "sqlDatabaseName": "[format('{0}dfir', parameters('namePrefix'))]",
     "systemTopicName": "[format('{0}-evidence-topic', parameters('namePrefix'))]",
     "appInsightsName": "[format('{0}-ai-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
-    "storageBlobDataContributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-    "storageBlobDelegator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
-    "keyVaultSecretsUser": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
-    "targetSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), parameters('subnetName')), parameters('privateEndpointSubnetId'))]"
+    "actualVnetName": "[format('{0}-vnet-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
+    "subnetName": "Forensic-Enclave-Subnet",
+    "functionIntegrationSubnetName": "Function-Integration-Subnet",
+    "actualFunctionIntegrationSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), variables('functionIntegrationSubnetName')), parameters('functionIntegrationSubnetId'))]",
+    "storageBlobDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "storageBlobDelegator": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
+    "keyVaultSecretsUser": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "targetSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), variables('subnetName')), parameters('privateEndpointSubnetId'))]"
   },
   "resources": [
     {
@@ -503,10 +520,24 @@
         },
         "subnets": [
           {
-            "name": "[parameters('subnetName')]",
+            "name": "[variables('subnetName')]",
             "properties": {
               "addressPrefix": "[parameters('subnetAddressPrefix')]",
               "privateEndpointNetworkPolicies": "Disabled"
+            }
+          },
+          {
+            "name": "[variables('functionIntegrationSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('functionIntegrationSubnetAddressPrefix')]",
+              "delegations": [
+                {
+                  "name": "functionAppDelegation",
+                  "properties": {
+                    "serviceName": "Microsoft.Web/serverFarms"
+                  }
+                }
+              ]
             }
           }
         ]
@@ -787,6 +818,7 @@
       "properties": {
         "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
         "httpsOnly": true,
+        "virtualNetworkSubnetId": "[variables('actualFunctionIntegrationSubnetId')]",
         "siteConfig": {
           "linuxFxVersion": "Python|3.11",
           "ftpsState": "Disabled",
@@ -855,7 +887,7 @@
             },
             {
               "name": "FORENSIC_SUBSCRIPTION_ID",
-              "value": "[subscription().subscriptionId]"
+              "value": "[parameters('forensicSubscriptionId')]"
             },
             {
               "name": "FORENSIC_RESOURCE_GROUP",
@@ -884,6 +916,10 @@
             {
               "name": "EVIDENCE_STORAGE_SERVICE_TAG",
               "value": "[format('Storage.{0}', parameters('location'))]"
+            },
+            {
+              "name": "EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES",
+              "value": "[join(parameters('evidenceStoragePrivateEndpointPrefixes'), ',')]"
             },
             {
               "name": "ACQUISITION_TIMEOUT_SECONDS",
@@ -944,6 +980,69 @@
         "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
       ]
+    },
+    {
+      "condition": "[and(not(parameters('enableMockMode')), not(empty(parameters('targetResourceGroup'))))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "network-containment-rbac",
+      "subscriptionId": "[parameters('targetSubscriptionId')]",
+      "resourceGroup": "[parameters('targetResourceGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2023-12-01', 'full').identity.principalId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.48.1.52935",
+              "templateHash": "3120716334517121796"
+            }
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Principal ID of the Function App Managed Identity to grant permissions."
+              }
+            }
+          },
+          "variables": {
+            "networkContributorRoleId": "4d97b98b-1d4f-4787-a291-c67834d212e7"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('networkContributorRoleId'))]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "description": "Grant Network Contributor on Compromised-Environment-RG to Forensic Containment Function App"
+              }
+            }
+          ],
+          "outputs": {
+            "roleAssignmentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -993,7 +1092,7 @@
     },
     "enclaveSubscriptionId": {
       "type": "string",
-      "value": "[subscription().subscriptionId]"
+      "value": "[parameters('forensicSubscriptionId')]"
     },
     "storagePrivateEndpointId": {
       "type": "string",

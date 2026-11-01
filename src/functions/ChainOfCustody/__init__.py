@@ -231,3 +231,8 @@ def chain_of_custody(req: func.HttpRequest) -> func.HttpResponse:
         # so a transient SQL or storage fault never loses a custody record.
         logging.exception("Chain-of-custody processing failed.")
         return _json_response(500, {"error": f"Custody recording failed: {error}"})
+
+
+@bp.route(route="ChainOfCustody", methods=["POST"])
+def chain_of_custody_legacy(req: func.HttpRequest) -> func.HttpResponse:
+    return chain_of_custody(req)

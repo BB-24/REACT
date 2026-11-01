@@ -102,9 +102,9 @@ class TestE2EPipeline(unittest.TestCase):
             "ResourceGroupName": "Compromised-Environment-RG",
         }
 
-    @patch("src.functions.NetworkContainment.DefaultAzureCredential")
-    @patch("src.functions.NetworkContainment.NetworkManagementClient")
-    @patch("azure.mgmt.compute.ComputeManagementClient")
+    @patch("src.functions.NetworkContainment.clients.credential")
+    @patch("src.functions.NetworkContainment.clients.network_client")
+    @patch("src.functions.NetworkContainment.clients.compute_client")
     def test_e2e_1_happy_path_complete_incident_response(
         self, mock_compute_cls, mock_network_cls, mock_cred_cls
     ):
@@ -135,9 +135,9 @@ class TestE2EPipeline(unittest.TestCase):
         self.assertIn("Start_Acquisition_Workflow", action_names)
         self.assertIn("Start_Analysis_Pipeline", action_names)
 
-    @patch("src.functions.NetworkContainment.DefaultAzureCredential")
-    @patch("src.functions.NetworkContainment.NetworkManagementClient")
-    @patch("azure.mgmt.compute.ComputeManagementClient")
+    @patch("src.functions.NetworkContainment.clients.credential")
+    @patch("src.functions.NetworkContainment.clients.network_client")
+    @patch("src.functions.NetworkContainment.clients.compute_client")
     def test_e2e_2_critical_infrastructure_vm_full_pipeline(
         self, mock_compute_cls, mock_network_cls, mock_cred_cls
     ):

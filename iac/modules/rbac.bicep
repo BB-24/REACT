@@ -2,7 +2,7 @@
 param principalId string
 
 @description('Built-in Network Contributor role definition ID.')
-var networkContributorRoleId = '4d3025cd-af43-4a71-b66d-5710428f242c'
+var networkContributorRoleId = '4d97b98b-1d4f-4787-a291-c67834d212e7'
 
 resource networkContributorRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
   scope: subscription()

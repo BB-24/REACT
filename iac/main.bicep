@@ -72,39 +72,44 @@ param sasTtlMinutes int = 60
 @description('Object ID of the Logic App managed identity that triggers the response.')
 param logicAppPrincipalId string = ''
 
-@description('Subscription containing the VMs under investigation.')
+@description('Subscription ID where this forensic enclave is deployed.')
+param forensicSubscriptionId string = subscription().subscriptionId
+
+@description('Workload subscription containing the VMs under investigation. May differ from this deployment subscription.')
 param targetSubscriptionId string = subscription().subscriptionId
 
 @description('Resource group containing those VMs.')
 param targetResourceGroup string = ''
 
+@description('Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG.')
+param evidenceStoragePrivateEndpointPrefixes array = []
+
+@description('Existing subnet resource ID delegated to Microsoft.Web/serverFarms for Function App VNet integration. Required when using an existing private endpoint subnet.')
+param functionIntegrationSubnetId string = ''
+
+@description('Address prefix used for the Function App integration subnet when this template creates the enclave VNet.')
+param functionIntegrationSubnetAddressPrefix string = '10.250.1.0/24'
+
 @description('Deploy with the mock estate enabled. Never true for a real enclave.')
 param enableMockMode bool = false
 
-@description('Optional existing Virtual Network name. If empty, a dedicated enclave VNet is derived from namePrefix.')
-param vnetName string = ''
-
-@description('Subnet name for the private endpoints.')
-param subnetName string = 'Forensic-Enclave-Subnet'
-
-@description('Address prefix for the forensic enclave VNet.')
-param vnetAddressPrefix string = '10.240.0.0/16'
-
-@description('Address prefix for the forensic enclave subnet.')
-param subnetAddressPrefix string = '10.240.1.0/24'
-
-@description('Optional existing subnet resource ID for private endpoints. If empty, a dedicated enclave VNet and subnet will be created.')
-param privateEndpointSubnetId string = ''
-
-@description('Public network access for the forensic storage account. Default is Disabled (access restricted to Private Endpoints and trusted Azure services).')
 @allowed([
   'Enabled'
   'Disabled'
 ])
+@description('Storage account public network access. The Function App is VNet-integrated to the Storage private endpoint.')
 param storagePublicNetworkAccess string = 'Disabled'
 
-var suffix = uniqueString(resourceGroup().id)
-var actualVnetName = empty(vnetName) ? '${namePrefix}-vnet-${substring(suffix, 0, 8)}' : vnetName
+@description('Existing subnet resource ID for the Storage private endpoint. Leave empty to create the enclave VNet and subnet.')
+param privateEndpointSubnetId string = ''
+
+@description('Address prefix used when this template creates the enclave VNet.')
+param vnetAddressPrefix string = '10.250.0.0/16'
+
+@description('Address prefix used for the private-endpoint subnet when this template creates the enclave VNet.')
+param subnetAddressPrefix string = '10.250.0.0/24'
+
+var suffix = uniqueString(forensicSubscriptionId, resourceGroup().id)
 var storageAccountName = toLower('${namePrefix}enc${substring(suffix, 0, 8)}')
 var keyVaultName = '${namePrefix}-kv-${substring(suffix, 0, 8)}'
 var functionAppName = '${namePrefix}-fn-${substring(suffix, 0, 8)}'
@@ -113,17 +118,26 @@ var sqlServerName = '${namePrefix}-sql-${substring(suffix, 0, 8)}'
 var sqlDatabaseName = '${namePrefix}dfir'
 var systemTopicName = '${namePrefix}-evidence-topic'
 var appInsightsName = '${namePrefix}-ai-${substring(suffix, 0, 8)}'
+var actualVnetName = '${namePrefix}-vnet-${substring(suffix, 0, 8)}'
+var subnetName = 'Forensic-Enclave-Subnet'
+var functionIntegrationSubnetName = 'Function-Integration-Subnet'
+var actualFunctionIntegrationSubnetId = empty(privateEndpointSubnetId)
+  ? resourceId('Microsoft.Network/virtualNetworks/subnets', actualVnetName, functionIntegrationSubnetName)
+  : functionIntegrationSubnetId
 
 // Built-in role definition IDs.
 var storageBlobDataContributor = subscriptionResourceId(
+  forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 )
 var storageBlobDelegator = subscriptionResourceId(
+  forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   'db58b8e5-c6ad-4a2a-8342-4190687cbf4a'
 )
 var keyVaultSecretsUser = subscriptionResourceId(
+  forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   '4633458b-17de-408a-b874-0445c86b69e6'
 )
@@ -457,6 +471,20 @@ resource enclaveVnet 'Microsoft.Network/virtualNetworks@2023-11-01' = if (empty(
           privateEndpointNetworkPolicies: 'Disabled'
         }
       }
+      {
+        name: functionIntegrationSubnetName
+        properties: {
+          addressPrefix: functionIntegrationSubnetAddressPrefix
+          delegations: [
+            {
+              name: 'functionAppDelegation'
+              properties: {
+                serviceName: 'Microsoft.Web/serverFarms'
+              }
+            }
+          ]
+        }
+      }
     ]
   }
 }
@@ -721,6 +749,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: hostingPlan.id
     httpsOnly: true
+    virtualNetworkSubnetId: actualFunctionIntegrationSubnetId
     siteConfig: {
       linuxFxVersion: 'Python|3.11'
       ftpsState: 'Disabled'
@@ -758,7 +787,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         }
         { name: 'LEDGER_TABLE', value: 'dbo.EvidenceLedger' }
 
-        { name: 'FORENSIC_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+        { name: 'FORENSIC_SUBSCRIPTION_ID', value: forensicSubscriptionId }
         { name: 'FORENSIC_RESOURCE_GROUP', value: resourceGroup().name }
         { name: 'FORENSIC_LOCATION', value: location }
         { name: 'AZURE_SUBSCRIPTION_ID', value: targetSubscriptionId }
@@ -767,9 +796,23 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
 
         { name: 'HASH_CHUNK_BYTES', value: '8388608' }
         { name: 'EVIDENCE_STORAGE_SERVICE_TAG', value: 'Storage.${location}' }
+        {
+          name: 'EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES'
+          value: join(evidenceStoragePrivateEndpointPrefixes, ',')
+        }
         { name: 'ACQUISITION_TIMEOUT_SECONDS', value: '5400' }
       ]
     }
+  }
+}
+
+// Target permissions are opt-in and limited to the configured target resource
+// group. Mock deployments never receive a role assignment on workload assets.
+module networkContainmentRbac 'modules/rbac.bicep' = if (!enableMockMode && !empty(targetResourceGroup)) {
+  name: 'network-containment-rbac'
+  scope: resourceGroup(targetSubscriptionId, targetResourceGroup)
+  params: {
+    principalId: functionApp.identity.principalId
   }
 }
 
@@ -820,7 +863,7 @@ output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output sqlDatabaseName string = ledgerDatabase.name
 output systemTopicName string = systemTopic.name
 output enclaveResourceGroup string = resourceGroup().name
-output enclaveSubscriptionId string = subscription().subscriptionId
+output enclaveSubscriptionId string = forensicSubscriptionId
 
 // P2-5 Outputs
 output storagePrivateEndpointId string = storagePrivateEndpoint.id

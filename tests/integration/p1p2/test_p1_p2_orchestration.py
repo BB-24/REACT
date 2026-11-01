@@ -2,9 +2,10 @@
 
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.functions.NetworkContainment import main as containment_main
+from src.functions.NetworkContainment import network_containment_legacy as containment_main
 from src.functions.shared import sas
 
 
@@ -40,9 +41,35 @@ class TestP1P2Integration(unittest.TestCase):
             return "Start_Acquisition_Workflow"
         return "Record_Containment_Failure"
 
-    @patch("src.functions.NetworkContainment.DefaultAzureCredential")
-    @patch("src.functions.NetworkContainment.NetworkManagementClient")
-    @patch("azure.mgmt.compute.ComputeManagementClient")
+    def test_logic_app_test_mode_returns_containment_without_downstream_actions(self):
+        workflow_path = Path(__file__).resolve().parents[3] / "src" / "logic-apps" / "workflow.json"
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        schema = workflow["triggers"]["Incident_Webhook"]["inputs"]["schema"]
+        test_mode = schema["properties"]["TestMode"]
+        self.assertEqual(test_mode["type"], "boolean")
+
+        containment = workflow["actions"]["High_Or_Critical_Severity_Only"]["actions"]
+        test_mode_branch = containment["Containment_Test_Mode"]
+        self.assertEqual(
+            test_mode_branch["actions"]["Return_Containment_Result"]["type"],
+            "Response",
+        )
+        self.assertEqual(
+            containment["Call_Network_Containment"]["runtimeConfiguration"]["secureData"][
+                "properties"
+            ],
+            ["inputs"],
+        )
+        normal_branch = test_mode_branch["else"]["actions"]["Check_Containment_Success"]
+        self.assertIn("Start_Acquisition_Workflow", normal_branch["actions"])
+        self.assertIn("Check_Acquisition_Completed", normal_branch["actions"])
+        acquisition_check = normal_branch["actions"]["Check_Acquisition_Completed"]
+        self.assertIn("Start_Analysis_Pipeline", acquisition_check["actions"])
+        self.assertIn("Record_Acquisition_Failure", acquisition_check["else"]["actions"])
+
+    @patch("src.functions.NetworkContainment.clients.credential")
+    @patch("src.functions.NetworkContainment.clients.network_client")
+    @patch("src.functions.NetworkContainment.clients.compute_client")
     def test_p1p2_normal_containment_and_acquisition_trigger(
         self, mock_compute_cls, mock_network_cls, mock_cred_cls
     ):
@@ -71,6 +98,7 @@ class TestP1P2Integration(unittest.TestCase):
         body = json.loads(resp.get_body())
         self.assertEqual(body["status"], "Contained")
         self.assertEqual(body["IsolationNSG"], "Forensic-Isolation-NSG-INC-2026-9001")
+        self.assertIn("PreviousNSGId", body)
 
         next_action = self._simulate_logic_app_eval(body, resp.status_code)
         self.assertEqual(next_action, "Start_Acquisition_Workflow")
@@ -86,9 +114,9 @@ class TestP1P2Integration(unittest.TestCase):
         self.assertEqual(acquisition_payload["IncidentID"], "INC-2026-9001")
         self.assertIn("workstation-01.raw", acquisition_payload["EvidenceBlobUri"])
 
-    @patch("src.functions.NetworkContainment.DefaultAzureCredential")
-    @patch("src.functions.NetworkContainment.NetworkManagementClient")
-    @patch("azure.mgmt.compute.ComputeManagementClient")
+    @patch("src.functions.NetworkContainment.clients.credential")
+    @patch("src.functions.NetworkContainment.clients.network_client")
+    @patch("src.functions.NetworkContainment.clients.compute_client")
     def test_p1p2_critical_infrastructure_bypassed_acquisition_proceeds(
         self, mock_compute_cls, mock_network_cls, mock_cred_cls
     ):

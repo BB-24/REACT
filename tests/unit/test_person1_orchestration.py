@@ -21,6 +21,7 @@ from src.functions.NetworkContainment import (
     _private_endpoint_prefixes,
     _resource_parts,
     _rule_payload,
+    build_isolation_rules,
 )
 from src.functions.NetworkContainment import (
     main as containment_main,
@@ -152,6 +153,28 @@ class TestPerson1Orchestration(unittest.TestCase):
             prefixes = _private_endpoint_prefixes()
             self.assertEqual(prefixes, ["10.0.1.0/24", "10.0.2.15/32"])
 
+    def test_task_1_2_private_endpoint_rules_allow_only_https(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES": "10.0.2.15/32",
+                "EVIDENCE_STORAGE_SERVICE_TAG": "Storage.eastus",
+            },
+        ):
+            rules = build_isolation_rules()
+
+        private_link_rule = next(
+            rule for rule in rules if rule["name"] == "Allow-Evidence-PrivateLink-1"
+        )
+        self.assertEqual(private_link_rule["destination_address_prefix"], "10.0.2.15/32")
+        self.assertEqual(private_link_rule["destination_port_range"], "443")
+        self.assertLess(private_link_rule["priority"], 4095)
+
+    def test_task_1_2_invalid_private_endpoint_prefix_rejected(self):
+        with patch.dict("os.environ", {"EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES": "not-an-ip"}):
+            with self.assertRaisesRegex(RuntimeError, "must contain only IP addresses"):
+                build_isolation_rules()
+
     def test_task_1_2_primary_nic_resolution(self):
         """REQ-3.2.4: Identifies primary NIC from VM network profile."""
         fake_vm = MagicMock()
@@ -170,9 +193,9 @@ class TestPerson1Orchestration(unittest.TestCase):
         self.assertEqual(rg, "Test-RG")
         self.assertEqual(name, "vm-01")
 
-    @patch("src.functions.NetworkContainment.DefaultAzureCredential")
-    @patch("src.functions.NetworkContainment.NetworkManagementClient")
-    @patch("azure.mgmt.compute.ComputeManagementClient")
+    @patch("src.functions.NetworkContainment.clients.credential")
+    @patch("src.functions.NetworkContainment.clients.network_client")
+    @patch("src.functions.NetworkContainment.clients.compute_client")
     def test_task_1_2_critical_infrastructure_tag_bypass_execution(
         self, mock_compute, mock_network, mock_cred
     ):
@@ -214,7 +237,9 @@ class TestPerson1Orchestration(unittest.TestCase):
         self.assertIn("containmentFunctionUrl", params)
         self.assertIn("acquisitionArmRequestUrl", params)
         self.assertIn("acquisitionStatusUrl", params)
+        self.assertIn("acquisitionStatusAudience", params)
         self.assertIn("analysisPipelineUrl", params)
+        self.assertIn("analysisApiAudience", params)
         self.assertIn("evidenceBlobUriTemplate", params)
 
 

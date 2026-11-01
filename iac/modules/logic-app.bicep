@@ -9,19 +9,23 @@ param logicAppName string = 'aacfp-incident-response'
 param containmentFunctionUrl string
 
 @description('ARM trigger-run endpoint for the acquisition workflow owned by Person 2 (for example .../triggers/manual/run?api-version=2016-06-01).')
-param acquisitionArmRequestUrl string = '${environment().resourceManager}providers/Microsoft.Logic/workflows/dummy-acquisition/triggers/manual/run?api-version=2016-06-01'
+param acquisitionArmRequestUrl string
 
-@description('Endpoint that returns evidence acquisition status. It must return { status: "Completed" } when ready.')
-param acquisitionStatusUrl string = '${environment().resourceManager}providers/Microsoft.Logic/workflows/dummy-acquisition/status'
+@description('Endpoint that returns evidence acquisition status. It must return { status: "Completed" } when ready and { status: "Failed" } on terminal failure.')
+param acquisitionStatusUrl string
 
+@description('Microsoft Entra token audience accepted by the acquisition status API.')
+param acquisitionStatusAudience string
 
 @description('Endpoint for Person 3 analysis pipeline.')
-param analysisPipelineUrl string = 'https://forensic-analysis.azurewebsites.net/api/ProcessEvidence'
+@secure()
+param analysisPipelineUrl string
+
+@description('Microsoft Entra token audience accepted by the analysis API.')
+param analysisApiAudience string
 
 @description('Blob URI format string. {0} is IncidentID and {1} is the target VM name.')
-param evidenceBlobUriTemplate string = 'https://forensicevidence.blob.${environment().suffixes.storage}/evidence/{0}/{1}.raw'
-
-
+param evidenceBlobUriTemplate string
 
 @description('Optional tags to apply to the Logic App.')
 param tags object = {}
@@ -47,7 +51,9 @@ resource incidentResponseWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
       containmentFunctionUrl: { value: containmentFunctionUrl }
       acquisitionArmRequestUrl: { value: acquisitionArmRequestUrl }
       acquisitionStatusUrl: { value: acquisitionStatusUrl }
+      acquisitionStatusAudience: { value: acquisitionStatusAudience }
       analysisPipelineUrl: { value: analysisPipelineUrl }
+      analysisApiAudience: { value: analysisApiAudience }
       evidenceBlobUriTemplate: { value: evidenceBlobUriTemplate }
     }
   }

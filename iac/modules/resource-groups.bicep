@@ -1,37 +1,50 @@
-// Deploy this module at subscription scope. These resource groups deliberately
-// separate potentially compromised assets from the forensic evidence enclave.
-targetScope = 'subscription'
+// Management-group module that creates each resource group in its own
+// subscription. The contained subscription deployments are incremental.
+targetScope = 'managementGroup'
 
-@description('Name of the compromised environment resource group.')
-param compromisedEnvironmentRgName string = 'Compromised-Environment-RG'
+@description('Subscription that contains compromised workloads.')
+param compromisedSubscriptionId string
 
-@description('Name of the forensic enclave resource group.')
-param forensicEnclaveRgName string = 'Forensic-Enclave-RG'
+@description('Separate subscription that contains the forensic enclave.')
+param forensicSubscriptionId string
 
-@description('Azure region for both resource groups.')
+@description('Resource group for compromised workloads.')
+param compromisedResourceGroupName string
+
+@description('Resource group for forensic services and evidence.')
+param forensicResourceGroupName string
+
+@description('Azure region for the resource groups.')
 param location string
 
-@description('Optional tags applied consistently to both resource groups.')
+@description('Optional tags applied to both resource groups.')
 param tags object = {}
 
-resource compromisedEnvironmentRg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
-  name: compromisedEnvironmentRgName
-  location: location
-  tags: union(tags, {
-    Purpose: 'CompromisedEnvironment'
-    ManagedBy: 'AACFP'
-  })
+module compromisedResourceGroup 'resource-group.bicep' = {
+  name: 'create-compromised-rg-${uniqueString(compromisedSubscriptionId, compromisedResourceGroupName)}'
+  scope: subscription(compromisedSubscriptionId)
+  params: {
+    name: compromisedResourceGroupName
+    location: location
+    tags: union(tags, {
+      Purpose: 'CompromisedEnvironment'
+      ManagedBy: 'AACFP'
+    })
+  }
 }
 
-resource forensicEnclaveRg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
-  name: forensicEnclaveRgName
-  location: location
-  tags: union(tags, {
-    Purpose: 'ForensicEnclave'
-    ManagedBy: 'AACFP'
-  })
+module forensicResourceGroup 'resource-group.bicep' = {
+  name: 'create-forensic-rg-${uniqueString(forensicSubscriptionId, forensicResourceGroupName)}'
+  scope: subscription(forensicSubscriptionId)
+  params: {
+    name: forensicResourceGroupName
+    location: location
+    tags: union(tags, {
+      Purpose: 'ForensicEnclave'
+      ManagedBy: 'AACFP'
+    })
+  }
 }
 
-
-output compromisedEnvironmentResourceGroupName string = compromisedEnvironmentRg.name
-output forensicEnclaveResourceGroupName string = forensicEnclaveRg.name
+output compromisedResourceGroupId string = compromisedResourceGroup.outputs.resourceGroupId
+output forensicResourceGroupId string = forensicResourceGroup.outputs.resourceGroupId
