@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "4329567098767713819"
+      "templateHash": "14294624978932577723"
     }
   },
   "parameters": {
@@ -92,11 +92,18 @@
         "description": "Object ID of the Logic App managed identity that triggers the response."
       }
     },
+    "forensicSubscriptionId": {
+      "type": "string",
+      "defaultValue": "[subscription().subscriptionId]",
+      "metadata": {
+        "description": "Subscription ID where this forensic enclave is deployed."
+      }
+    },
     "targetSubscriptionId": {
       "type": "string",
       "defaultValue": "[subscription().subscriptionId]",
       "metadata": {
-        "description": "Subscription containing the VMs under investigation."
+        "description": "Workload subscription containing the VMs under investigation. May differ from this deployment subscription."
       }
     },
     "targetResourceGroup": {
@@ -122,7 +129,7 @@
     }
   },
   "variables": {
-    "suffix": "[uniqueString(resourceGroup().id)]",
+    "suffix": "[uniqueString(parameters('forensicSubscriptionId'), resourceGroup().id)]",
     "storageAccountName": "[toLower(format('{0}enc{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]",
     "keyVaultName": "[format('{0}-kv-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
     "functionAppName": "[format('{0}-fn-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
@@ -131,9 +138,9 @@
     "sqlDatabaseName": "[format('{0}dfir', parameters('namePrefix'))]",
     "systemTopicName": "[format('{0}-evidence-topic', parameters('namePrefix'))]",
     "appInsightsName": "[format('{0}-ai-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
-    "storageBlobDataContributor": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-    "storageBlobDelegator": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
-    "keyVaultSecretsUser": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]"
+    "storageBlobDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "storageBlobDelegator": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
+    "keyVaultSecretsUser": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]"
   },
   "resources": [
     {
@@ -603,7 +610,7 @@
             },
             {
               "name": "FORENSIC_SUBSCRIPTION_ID",
-              "value": "[subscription().subscriptionId]"
+              "value": "[parameters('forensicSubscriptionId')]"
             },
             {
               "name": "FORENSIC_RESOURCE_GROUP",
@@ -808,7 +815,7 @@
     },
     "enclaveSubscriptionId": {
       "type": "string",
-      "value": "[subscription().subscriptionId]"
+      "value": "[parameters('forensicSubscriptionId')]"
     },
     "postDeploymentPrincipal": {
       "type": "string",

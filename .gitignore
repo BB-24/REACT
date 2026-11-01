@@ -10,7 +10,10 @@ src/scripts/tools/
 
 # Azure Functions local settings (CRITICAL: Prevents leaking local connection strings)
 local.settings.json
-.vscode/
+
+# Local deployment parameters may contain Azure subscription and principal IDs.
+iac/parameters/*.parameters.json
+!iac/parameters/*.parameters.example.json
 
 # OS generated files
 .DS_Store

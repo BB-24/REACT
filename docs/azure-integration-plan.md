@@ -22,9 +22,11 @@ reproduce those results on the exact commit selected for cloud work.
 
 Relevant integration surfaces:
 
-- [`iac/main.bicep`](../iac/main.bicep) defines a resource-group-scoped
-  evidence enclave with Storage, Key Vault, Event Grid, SQL Ledger, Application
-  Insights, and a Linux Function App.
+- [`iac/main.mg.bicep`](../iac/main.mg.bicep) is the management-group entry
+  point for separate compromised-workload and forensic-vault subscriptions.
+  It creates each resource group in its own subscription and deploys
+  [`iac/main.bicep`](../iac/main.bicep), the resource-group-scoped evidence
+  enclave, into the forensic subscription.
 - [`src/functions/shared/clients.py`](../src/functions/shared/clients.py)
   currently switches all Azure clients together using `REACT_MOCK_MODE`.
   Disabling it can enable real compute and network clients too; do not use that
@@ -234,9 +236,12 @@ yet.
 
 ### Step 6 — Prepare a demo-specific Bicep configuration
 
-1. Create a demo-specific parameter file such as
-   `iac\parameters\demo.parameters.json`; keep any sensitive values out of the
-   file and repository. Do not change production defaults implicitly.
+1. Copy the
+   [`multi-subscription-demo.parameters.example.json`](../iac/parameters/multi-subscription-demo.parameters.example.json)
+   file to the ignored local path
+   `iac\parameters\multi-subscription-demo.parameters.json`. Set the distinct
+   workload and forensic subscription IDs, resource-group names, and a clearly
+   distinct demo prefix. Do not change production defaults implicitly.
 2. Include only the first milestone's required resources: Function runtime
    storage, demo evidence Storage, Function App, managed identity, and
    Application Insights. Add Event Grid and SQL only when their end-to-end
@@ -270,15 +275,20 @@ permissions or irreversible demo-data retention.
 2. Review the template for public endpoints, broad firewall rules, role
    assignment scopes, secret exposure, diagnostic settings, API versions, and
    retention/deletion behavior.
-3. Create or identify the dedicated demo resource group only after a separate
-   explicit approval to create it.
-4. Generate a deployment preview:
+3. Confirm the dedicated compromised and forensic subscriptions, intended
+   resource-group names, and deployment region. The management-group template
+   creates those groups only after deployment is approved.
+4. Generate a deployment preview. Copy
+   [`multi-subscription-demo.parameters.example.json`](../iac/parameters/multi-subscription-demo.parameters.example.json)
+   to `iac\parameters\multi-subscription-demo.parameters.json`, replace every
+   placeholder with approved values, then run:
 
    ```powershell
-   az deployment group what-if `
-       --resource-group <demo-resource-group> `
-       --template-file iac/main.bicep `
-       --parameters "@iac\parameters\demo.parameters.json"
+   az deployment mg what-if `
+       --management-group-id <management-group-id> `
+       --location <deployment-location> `
+       --template-file iac/main.mg.bicep `
+       --parameters "@iac\parameters\multi-subscription-demo.parameters.json"
    ```
 
 5. Inspect every resource and change in the `what-if`. Resolve unexpected
@@ -294,8 +304,8 @@ is not permission to deploy.
 
 Only after Step 7 receives separate explicit deployment approval:
 
-1. Deploy the reviewed Bicep configuration to the approved demo resource group.
-   Do not deploy the template if its parameters or `what-if` changed.
+1. Deploy the reviewed Bicep configuration at management-group scope only
+   after approval. Do not deploy if its parameters or `what-if` changed.
 2. Save deployment outputs securely. Treat Function keys, connection strings,
    and SAS URLs as secrets; do not copy them into the repository or
    presentation screenshots.

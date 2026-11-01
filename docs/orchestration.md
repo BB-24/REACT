@@ -94,20 +94,17 @@ The ingress Webhook trigger and downstream calls enforce the standard JSON schem
 
 ### Secure deployment order
 
-1. Create the resource groups using the subscription-scoped
-   [`resource-groups.bicep`](../iac/modules/resource-groups.bicep) module:
-   ```powershell
-   az deployment sub create --location eastus --template-file iac/modules/resource-groups.bicep
-   ```
-   Deploy the module in each subscription that needs its resource groups when
-   the workload and enclave subscriptions differ.
-2. Deploy [`main.bicep`](../iac/main.bicep) to `Forensic-Enclave-RG`. Set
-   `targetSubscriptionId` and `targetResourceGroup` to the approved workload
-   boundary to grant the Function identity Network Contributor only there.
-   The role assignment is omitted for mock mode and when the target group is
-   unset. Set `evidenceStoragePrivateEndpointPrefixes` to the storage Private
-   Endpoint IP/CIDR values if Private Link is used; the isolation NSG permits
-   HTTPS to those prefixes and the configured regional Storage service tag.
+1. Deploy [`main.mg.bicep`](../iac/main.mg.bicep) at the management-group
+   scope. It creates `Compromised-Environment-RG` in the workload subscription
+   and `Forensic-Enclave-RG` in the separate forensic subscription, then
+   deploys the enclave stack to the latter. See
+   [`multi-subscription-deployment.md`](./multi-subscription-deployment.md)
+   for the required permissions and `what-if` workflow.
+2. The Function managed identity receives Network Contributor only on the
+   configured workload resource group. The role assignment is omitted in mock
+   mode. Set `evidenceStoragePrivateEndpointPrefixes` if Storage Private Link
+   is used; isolation allows HTTPS to those prefixes and the configured
+   regional Storage service tag.
 3. Configure the acquisition and analysis endpoints owned by Persons 2 and 3,
    then deploy [`logic-app.bicep`](../iac/modules/logic-app.bicep) to the
    enclave resource group. Its endpoint parameters are required; the module

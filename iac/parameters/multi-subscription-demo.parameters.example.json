@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "compromisedSubscriptionId": {
+      "value": "00000000-0000-0000-0000-000000000001"
+    },
+    "forensicSubscriptionId": {
+      "value": "00000000-0000-0000-0000-000000000002"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "namePrefix": {
+      "value": "reactdemo"
+    },
+    "sqlAdminObjectId": {
+      "value": "00000000-0000-0000-0000-000000000003"
+    },
+    "sqlAdminLogin": {
+      "value": "REPLACE_WITH_ENTRA_GROUP_DISPLAY_NAME"
+    }
+  }
+}

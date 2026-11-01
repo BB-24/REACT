@@ -96,54 +96,84 @@
 
 ## 3. Deployment: Dual-Region Bicep
 
-### 3.1 Parameter Files
+### 3.1 Management-Group Deployment Parameters
 
-**`iac/main.parameters.primary.json`**:
+The multi-subscription entry point uses separate subscription IDs and resource
+group names per region. Copy these examples to local parameter files and
+replace the placeholder IDs before deployment; keep real parameter files out
+of source control.
+
+**`iac/parameters/main-primary.parameters.json`**:
 ```json
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
+    "compromisedSubscriptionId": { "value": "00000000-0000-0000-0000-000000000001" },
+    "forensicSubscriptionId": { "value": "00000000-0000-0000-0000-000000000002" },
+    "compromisedResourceGroupName": { "value": "Compromised-Environment-RG" },
+    "forensicResourceGroupName": { "value": "Forensic-Enclave-RG" },
     "location": { "value": "eastus" },
-    "compromisedEnvironmentRgName": { "value": "Compromised-Environment-RG" },
-    "forensicEnclaveRgName": { "value": "Forensic-Enclave-RG" },
-    "functionAppName": { "value": "aacfp-containment-primary" },
-    "functionStorageName": { "value": "aacfpstgprimary" },
-    "logicAppName": { "value": "aacfp-incident-response" }
+    "sqlAdminObjectId": { "value": "00000000-0000-0000-0000-000000000003" },
+    "sqlAdminLogin": { "value": "REPLACE_WITH_ENTRA_GROUP_DISPLAY_NAME" }
   }
 }
 ```
 
-**`iac/main.parameters.dr.json`**:
+**`iac/parameters/main-dr.parameters.json`**:
 ```json
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
+    "compromisedSubscriptionId": { "value": "00000000-0000-0000-0000-000000000001" },
+    "forensicSubscriptionId": { "value": "00000000-0000-0000-0000-000000000002" },
+    "compromisedResourceGroupName": { "value": "Compromised-Environment-RG-DR" },
+    "forensicResourceGroupName": { "value": "Forensic-Enclave-RG-DR" },
     "location": { "value": "westus2" },
-    "compromisedEnvironmentRgName": { "value": "Compromised-Environment-RG-DR" },
-    "forensicEnclaveRgName": { "value": "Forensic-Enclave-RG-DR" },
-    "functionAppName": { "value": "aacfp-containment-dr" },
-    "functionStorageName": { "value": "aacfpstgdr" },
-    "logicAppName": { "value": "aacfp-incident-response-dr" }
+    "sqlAdminObjectId": { "value": "00000000-0000-0000-0000-000000000003" },
+    "sqlAdminLogin": { "value": "REPLACE_WITH_ENTRA_GROUP_DISPLAY_NAME" }
   }
 }
 ```
 
-### 3.2 Deploy Both Regions
+Use distinct workload and forensic subscription IDs, and review each preview
+before deployment.
+
+### 3.2 Preview Both Regions
+
+```bash
+# Primary preview
+az deployment mg what-if \
+  --management-group-id <management-group-id> \
+  --location eastus \
+  --template-file iac/main.mg.bicep \
+  --parameters @iac/parameters/main-primary.parameters.json
+
+# DR preview
+az deployment mg what-if \
+  --management-group-id <management-group-id> \
+  --location westus2 \
+  --template-file iac/main.mg.bicep \
+  --parameters @iac/parameters/main-dr.parameters.json
+```
+
+After review and explicit approval, create the deployments:
 
 ```bash
 # Primary
-az deployment sub create \
+az deployment mg create \
+  --management-group-id <management-group-id> \
   --location eastus \
-  --template-file iac/main.bicep \
-  --parameters @iac/main.parameters.primary.json
+  --template-file iac/main.mg.bicep \
+  --parameters @iac/parameters/main-primary.parameters.json
 
 # DR (run in parallel or after primary succeeds)
-az deployment sub create \
+az deployment mg create \
+  --management-group-id <management-group-id> \
   --location westus2 \
-  --template-file iac/main.bicep \
-  --parameters @iac/main.parameters.dr.json
+  --template-file iac/main.mg.bicep \
+  --parameters @iac/parameters/main-dr.parameters.json
 ```
 ---
 

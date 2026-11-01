@@ -72,7 +72,10 @@ param sasTtlMinutes int = 60
 @description('Object ID of the Logic App managed identity that triggers the response.')
 param logicAppPrincipalId string = ''
 
-@description('Subscription containing the VMs under investigation.')
+@description('Subscription ID where this forensic enclave is deployed.')
+param forensicSubscriptionId string = subscription().subscriptionId
+
+@description('Workload subscription containing the VMs under investigation. May differ from this deployment subscription.')
 param targetSubscriptionId string = subscription().subscriptionId
 
 @description('Resource group containing those VMs.')
@@ -84,7 +87,7 @@ param evidenceStoragePrivateEndpointPrefixes array = []
 @description('Deploy with the mock estate enabled. Never true for a real enclave.')
 param enableMockMode bool = false
 
-var suffix = uniqueString(resourceGroup().id)
+var suffix = uniqueString(forensicSubscriptionId, resourceGroup().id)
 var storageAccountName = toLower('${namePrefix}enc${substring(suffix, 0, 8)}')
 var keyVaultName = '${namePrefix}-kv-${substring(suffix, 0, 8)}'
 var functionAppName = '${namePrefix}-fn-${substring(suffix, 0, 8)}'
@@ -96,14 +99,17 @@ var appInsightsName = '${namePrefix}-ai-${substring(suffix, 0, 8)}'
 
 // Built-in role definition IDs.
 var storageBlobDataContributor = subscriptionResourceId(
+  forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 )
 var storageBlobDelegator = subscriptionResourceId(
+  forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   'db58b8e5-c6ad-4a2a-8342-4190687cbf4a'
 )
 var keyVaultSecretsUser = subscriptionResourceId(
+  forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   '4633458b-17de-408a-b874-0445c86b69e6'
 )
@@ -545,7 +551,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         }
         { name: 'LEDGER_TABLE', value: 'dbo.EvidenceLedger' }
 
-        { name: 'FORENSIC_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+        { name: 'FORENSIC_SUBSCRIPTION_ID', value: forensicSubscriptionId }
         { name: 'FORENSIC_RESOURCE_GROUP', value: resourceGroup().name }
         { name: 'FORENSIC_LOCATION', value: location }
         { name: 'AZURE_SUBSCRIPTION_ID', value: targetSubscriptionId }
@@ -621,7 +627,7 @@ output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output sqlDatabaseName string = ledgerDatabase.name
 output systemTopicName string = systemTopic.name
 output enclaveResourceGroup string = resourceGroup().name
-output enclaveSubscriptionId string = subscription().subscriptionId
+output enclaveSubscriptionId string = forensicSubscriptionId
 
 @description('Grant this identity Network Contributor + Reader + Disk Snapshot rights on the TARGET subscription, and a contained DB user on the ledger database. See iac/scripts/init-sql-ledger.sql.')
 output postDeploymentPrincipal string = functionApp.identity.principalId
