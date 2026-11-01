@@ -5,9 +5,9 @@
 [![Safety: Mock Mode](https://img.shields.io/badge/Mode-Safe%20Offline%20Simulation-amber.svg)](#safety-boundaries--mock-mode-guarantee)
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](#prerequisites)
 
-> **MANDATORY NOTICE**  
-> **SIMULATED — synthetic data; no Azure resources or live machines touched.**  
-> *This repository contains an automated incident-response and cloud forensic prototype demonstration. In demonstration mode, all actions execute process-locally against an in-memory simulated Azure fabric. No live VMs are altered, no cloud credentials are used, and no genuine forensic evidence is collected.*
+> **LIVE DEMO AVAILABLE:** [`scripts/run-azure-demo.ps1`](scripts/run-azure-demo.ps1) operates on pre-deployed Azure resources and a disposable VM; it does not deploy infrastructure or create VMs. Network containment, memory acquisition, and optional snapshots are real Azure actions and require explicit confirmations.
+>
+> **OFFLINE TEST MODE:** `scripts/demo.py` is a separate synthetic simulation that does not contact Azure or collect forensic evidence. It is for local testing, not the live reviewer walkthrough.
 
 ---
 
@@ -26,7 +26,11 @@ When a cloud virtual machine is compromised (such as during a ransomware outbrea
 
 ---
 
-## 2. Architecture & Implementation Status
+## 2. Offline Simulation Architecture & Implementation Status
+
+The diagram below describes the **local synthetic simulator**, not a live
+Azure deployment. Use the live Azure walkthrough in section 4 when presenting
+the deployed Functions and Azure resources.
 
 ```
                        COMPROMISED SUBSCRIPTION (0000...0001)
@@ -85,28 +89,61 @@ When a cloud virtual machine is compromised (such as during a ransomware outbrea
   ```bash
   pip install -r src/functions/requirements.txt pytest ruff
   ```
-- **Azure Account:** **NOT required.** The demo runs 100% offline.
+- **Live Azure walkthrough:** An authenticated Azure CLI session, an existing live-mode Function App, its custody Event Grid subscription, and an already-running disposable VM tagged `REACT-Demo=true` are required.
+- **Offline simulator:** An Azure account is not required; it uses synthetic data and in-memory resources only.
 
 ---
 
 ## 4. Quick Start & Demo Launch
 
-The demo provides a single unified launcher: [`scripts/demo.py`](scripts/demo.py).
+Choose the live Azure walkthrough for reviewer demonstrations or the offline
+simulator for local testing:
 
-### Option A: Interactive Browser Dashboard (Recommended)
+### Option A: Live Azure Reviewer Walkthrough
 
-Start the local web dashboard:
-```bash
-python scripts/demo.py --web
+For a live demonstration, use the PowerShell orchestrator with an existing
+Function App and a **disposable, pre-tagged test VM**:
+
+```powershell
+$targetVmId = az vm show --resource-group $env:TARGET_RG --name web-01 --query id --output tsv
+
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $targetVmId `
+  -Scenario Standard `
+  -CaptureDiskSnapshots `
+  -ConfirmLiveActions
 ```
-Open **`http://127.0.0.1:8080`** in your browser. You will see:
-- Conspicuous simulation and offline banners.
-- Interactive scenario selector cards.
-- Live execution stepper with per-stage details.
-- Real-time cryptographic ledger table inspector.
-- Sanitized evidence dossier viewer with zero bearer secrets.
 
-### Option B: Interactive Terminal Runner
+For a no-change preflight, add `-PreflightOnly` and omit
+`-CaptureDiskSnapshots -ConfirmLiveActions`.
+
+The script verifies the Azure CLI context, Function App live-mode settings,
+custody Event Grid subscription, target resource-group scope, and
+`REACT-Demo=true` VM tag before it can act.
+It calls the deployed containment and acquisition Functions, waits for custody
+verification, and optionally requests disk snapshots. It does **not** deploy
+infrastructure or create VMs. Network isolation, memory collection, and disk
+snapshots affect real Azure resources and require typed confirmations.
+
+For a critical-infrastructure policy-bypass demonstration, use a separate
+disposable VM tagged `REACT-Demo=true` and `Critical-Infrastructure=true`, then
+run the same command with `-Scenario CriticalBypass`. The script expects
+containment to be bypassed and continues with acquisition.
+
+The script writes a secret-free recovery summary under `$env:TEMP`. After the
+review and acquisition are complete, restore the original NIC NSG associations
+with:
+
+```powershell
+.\scripts\run-azure-demo.ps1 -RestoreFrom "<path-to-run-summary.json>" -ConfirmRestore
+```
+
+It will only restore NICs still attached to the isolation NSG created for that
+incident. It does not delete evidence, snapshots, the enclave, or test VMs.
+
+### Offline Option B: Interactive Terminal Runner
 
 Run the interactive terminal menu:
 ```bash
@@ -114,7 +151,7 @@ python scripts/demo.py
 ```
 Presents a guided menu to run scenarios, inspect prerequisites, or reset the estate.
 
-### Option C: Non-Interactive CLI Scenario Execution
+### Offline Option C: Non-Interactive CLI Scenario Execution
 
 Run individual scenarios or all scenarios directly:
 ```bash
@@ -139,7 +176,7 @@ python scripts/demo.py --reset
 
 ---
 
-## 5. Demonstration Scenarios
+## 5. Offline Simulation Scenarios
 
 ### Scenario 1: High-Severity Incident Response (Standard Containment)
 - **Target:** `web-01` (Windows Server 2022 in `rg-victims`)

@@ -6,6 +6,7 @@ venv/
 env/
 /scripts/*
 !/scripts/demo.py
+!/scripts/run-azure-demo.ps1
 src/scripts/tools/
 
 # Azure Functions local settings (CRITICAL: Prevents leaking local connection strings)

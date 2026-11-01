@@ -419,6 +419,7 @@ az vm create `
   --public-ip-sku "Standard" `
   --nsg-rule "RDP" `
   --location $env:LOCATION `
+  --tags "REACT-Demo=True" `
   --output none
 
 # 2. Deploy Linux Victim (db-02, Zone 2 with Critical-Infrastructure tag)
@@ -434,7 +435,7 @@ az vm create `
   --public-ip-sku "Standard" `
   --nsg-rule "SSH" `
   --location $env:LOCATION `
-  --tags "Critical-Infrastructure=True" `
+  --tags "Critical-Infrastructure=True" "REACT-Demo=True" `
   --output none
 
 # Discard password variable from memory
@@ -481,7 +482,8 @@ Copy-Item (Join-Path $env:REPO_ROOT "src\scripts\acquire-memory.sh")  -Destinati
 
 # 3. Upload to tools container in evidence storage account
 Write-Host "Uploading binaries and scripts to '$env:STORAGE_ACCOUNT/tools'..." -ForegroundColor Cyan
-$ToolFiles = @("winpmem.exe", "avml", "Acquire-Memory.ps1", "acquire-memory.sh")
+$ToolFiles = @("winpmem.exe", "avml", "
+Acquire-Memory.ps1", "acquire-memory.sh")
 
 foreach ($File in $ToolFiles) {
     az storage blob upload `
@@ -648,103 +650,67 @@ az functionapp restart --name $env:FUNC_APP_NAME --resource-group $env:ENCLAVE_R
 
 ---
 
-## 20. Live Scenario 1: High-Severity Incident Response
+## 20. Live Azure Reviewer Orchestration
 
-In this scenario, a high-severity alert triggers containment on Windows host `web-01`. Network isolation is enforced, memory is streamed into the enclave, Event Grid computes the SHA-256 hash, and the custody record is recorded in SQL Ledger.
+The PowerShell orchestrator uses an already deployed Function App and VMs. It
+does not deploy infrastructure, create VMs, or enable mock mode. Run it only
+against disposable demo machines; the memory image and disk snapshots are real
+Azure evidence and may incur costs.
 
-```powershell
-Set-Location $env:REPO_ROOT
-
-# 1. Dispatch Incident Containment
-$IncidentId = "INC-2026-LIVE-001"
-$Payload = @{
-    IncidentID       = $IncidentId
-    TargetVM         = $env:WEB01_ID
-    SubscriptionID   = $env:SUB_ID
-    IncidentSeverity = "High"
-} | ConvertTo-Json
-
-Write-Host "Triggering Containment for Incident $IncidentId on web-01..." -ForegroundColor Cyan
-$ContainResponse = Invoke-RestMethod `
-  -Uri "https://$env:FUNC_HOST_NAME/api/NetworkContainment" `
-  -Method POST `
-  -Body $Payload `
-  -ContentType "application/json"
-
-Write-Host "Containment Result: $($ContainResponse.status)"
-Write-Host "Isolation NSG:      $($ContainResponse.isolationNsgName)"
-
-# 2. Dispatch Live Memory Acquisition
-Write-Host "Dispatching Asynchronous Memory Acquisition for $IncidentId..." -ForegroundColor Cyan
-$AcquireResponse = Invoke-RestMethod `
-  -Uri "https://$env:FUNC_HOST_NAME/api/acquire" `
-  -Method POST `
-  -Body $Payload `
-  -ContentType "application/json"
-
-Write-Host "Acquisition Status: $($AcquireResponse.status)"
-Write-Host "Job ID:             $($AcquireResponse.jobId)"
-Write-Host "Target Blob Name:   $($AcquireResponse.blobName)"
-
-# 3. Poll for Asynchronous Acquisition Completion
-$PollUrl = "https://$env:FUNC_HOST_NAME/api/status?incidentId=$IncidentId"
-Write-Host "Polling status at $PollUrl..." -ForegroundColor Cyan
-
-$MaxRetries = 30
-$RetryCount = 0
-do {
-    Start-Sleep -Seconds 15
-    $StatusCheck = Invoke-RestMethod -Uri $PollUrl -Method GET
-    Write-Host "  [$((Get-Date).ToUniversalTime().ToString('u'))] Status: $($StatusCheck.status)"
-    $RetryCount++
-} while ($StatusCheck.status -ne "Completed" -and $StatusCheck.status -ne "Failed" -and $RetryCount -lt $MaxRetries)
-
-if ($StatusCheck.status -eq "Completed") {
-    Write-Host "[SUCCESS] Live memory acquisition verified and hashed into ledger!" -ForegroundColor Green
-    Write-Host "SHA-256 Digest: $($StatusCheck.sha256)"
-    Write-Host "Size in Bytes:  $($StatusCheck.sizeBytes)"
-}
-```
-
----
-
-## 21. Live Scenario 2: Critical-Infrastructure Incident
-
-In this scenario, an alert targets Linux host `db-02`, which is marked `Critical-Infrastructure=True`. Network containment is safely bypassed to maintain service availability, while full volatile memory acquisition proceeds.
+Tag each approved test VM before the demo. `web-01` must be non-critical;
+`db-02` must have the critical-infrastructure tag to exercise the bypass path.
+Both must have `REACT-Demo=True`. The orchestration script checks these tags,
+the Function App's configured target subscription/resource group, live mode,
+and VM power state before any live action.
 
 ```powershell
 Set-Location $env:REPO_ROOT
 
-$IncidentId = "INC-2026-CRIT-002"
-$Payload = @{
-    IncidentID       = $IncidentId
-    TargetVM         = $env:DB02_ID
-    SubscriptionID   = $env:SUB_ID
-    IncidentSeverity = "High"
-} | ConvertTo-Json
+# Read-only preflight; does not change Azure resources.
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $env:WEB01_ID `
+  -Scenario Standard `
+  -PreflightOnly
 
-Write-Host "Dispatching Incident $IncidentId on Critical-Infrastructure host db-02..." -ForegroundColor Cyan
+# Live standard incident: requires typed confirmations for containment and acquisition.
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $env:WEB01_ID `
+  -Scenario Standard `
+  -CaptureDiskSnapshots `
+  -ConfirmLiveActions
 
-# 1. Trigger Containment (Expected: BYPASSED)
-$ContainResponse = Invoke-RestMethod `
-  -Uri "https://$env:FUNC_HOST_NAME/api/NetworkContainment" `
-  -Method POST `
-  -Body $Payload `
-  -ContentType "application/json"
-
-Write-Host "Containment Status: $($ContainResponse.status)" -ForegroundColor Yellow
-Write-Host "Bypass Reason:      $($ContainResponse.Reason)"
-Write-Host "Action Taken:       $($ContainResponse.Action)"
-
-# 2. Acquisition proceeds regardless of containment bypass
-$AcquireResponse = Invoke-RestMethod `
-  -Uri "https://$env:FUNC_HOST_NAME/api/acquire" `
-  -Method POST `
-  -Body $Payload `
-  -ContentType "application/json"
-
-Write-Host "Acquisition Job ID: $($AcquireResponse.jobId)"
+# Policy-bypass scenario on the separately tagged disposable Linux VM.
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $env:DB02_ID `
+  -Scenario CriticalBypass `
+  -CaptureDiskSnapshots `
+  -ConfirmLiveActions
 ```
+
+The orchestrator uses the Function App's default function key without printing
+or saving it, calls the deployed containment and memory-acquisition endpoints,
+waits for the custody endpoint to report `Completed`, and only then requests
+disk snapshots. The standard scenario leaves the VM isolated for reviewer
+inspection. Restore original NSG associations after review using the
+secret-free run summary path printed by the script:
+
+```powershell
+.\scripts\run-azure-demo.ps1 `
+  -RestoreFrom "<run-summary-path>" `
+  -ConfirmRestore
+```
+
+The restoration command first verifies each NIC still has the incident's
+isolation NSG; it refuses to overwrite a later network change. It does not
+delete the isolation NSG, evidence blobs, immutable storage, or snapshots.
+Review and clean up those resources according to the approved evidence
+retention policy.
 
 ---
 

@@ -1,101 +1,135 @@
-# REACT Mid-Semester Demo Presenter Script (3–5 Minutes)
+# REACT Live Azure Demo Presenter Guide
 
-> **MANDATORY REVIEWER NOTICE**  
-> **SIMULATED — synthetic data; no Azure resources or live machines touched.**  
-> *This demonstration is a process-local prototype simulation of cloud forensic automation. No live machines, Azure credentials, or cloud resources are accessed.*
+> **Live-system notice:** This walkthrough acts on real Azure resources. Use
+> only pre-deployed, disposable demo VMs tagged `REACT-Demo=True`. Network
+> containment changes NIC NSG associations; memory collection and disk
+> snapshots create real evidence and can incur Azure charges.
 
----
+## Before reviewers arrive
 
-## Presentation Overview
+1. Confirm the Function App and its supporting Storage, Event Grid, and SQL
+   resources are deployed and healthy. The Function App must use
+   `REACT_MOCK_MODE=false` and be scoped to the disposable target resource
+   group.
+2. Confirm the Windows test VM has `REACT-Demo=True` and does not have
+   `Critical-Infrastructure=True`.
+3. If demonstrating policy bypass, confirm the separate Linux test VM has both
+   `REACT-Demo=True` and `Critical-Infrastructure=True`.
+4. Confirm both VMs are running and their original NSG associations are known.
+   Never use a production or investigator-owned machine.
+5. In PowerShell, load the Function App, resource group, and VM IDs using the
+   approved local values. Do not paste Function keys, SAS URLs, or credentials
+   into slides, chat, source files, or screenshots.
 
-- **Presenter Role:** Incident Response Automation Engineer / Forensic Software Engineer
-- **Audience:** Faculty Evaluators, Project Reviewers, and Peer Engineers
-- **Target Duration:** 3 to 5 minutes
-- **Demo Command:** `python scripts/demo.py` (or web dashboard: `python scripts/demo.py --web`)
+## Live walkthrough
 
----
+The read-only preflight is quick; live acquisition time depends on VM memory
+size, Run Command completion, and custody delivery. Allow up to the configured
+status timeout for custody, and up to 90 minutes for the memory Function call.
 
-## Speaker Script & Step-by-Step Flow
+### 1. Problem and architecture
 
-### 1. Problem Statement & Motivation (0:00 – 0:45)
+> "REACT addresses the incident-response tradeoff between preserving volatile
+> memory and limiting an attacker's ability to move laterally. The Azure
+> Function App coordinates containment, memory acquisition, custody
+> verification, and gated disk snapshots. The forensic enclave is separate
+> from the target workload boundary."
 
-> *"Good morning/afternoon, evaluators. Today we are presenting Project **REACT** — the **Rapid Evidence Acquisition & Containment Toolkit** for cloud incident response.*
->
-> *When a cloud virtual machine is compromised — for instance, by ransomware or an active C2 implant — security operations face a fundamental dilemma:*
->
-> *If you power down or deallocate the VM, volatile memory is instantly wiped, destroying injection artifacts, decrypted keys, and active network connections.*
-> *If you leave the VM running, the attacker can move laterally or wipe memory before investigators can react.*
->
-> *REACT solves this by orchestrating an immediate, policy-driven network containment followed by non-destructive, live-response memory streaming and cross-subscription disk snapshotting, all bound into an immutable, cryptographic chain of custody."*
+Clarify that the demo uses real Azure infrastructure and a disposable test VM.
+The PowerShell script calls the deployed Function endpoints directly; it does
+not deploy infrastructure or invoke the Logic App workflow.
 
----
+### 2. Read-only preflight
 
-### 2. Architecture & Simulation Boundary (0:45 – 1:30)
+Run the preflight against the Windows demo VM:
 
-> *"Before diving into the run, let's establish the safety boundary of this mid-semester prototype:*
->
-> *This is an **offline simulation**. We designed REACT with a strict architectural seam in `shared.clients`. When `REACT_MOCK_MODE=true`, the system talks to an in-memory simulated Azure fabric:*
-> - *The **Compromised Subscription** (`0000...0001`) holds our victim VMs and production NICs.*
-> - *The **Forensic Enclave Subscription** (`0000...00e1`) holds our immutable evidence blob container under legal hold and our SQL Ledger verification engine.*
-> - *If any component attempts to request real Entra ID tokens, our `MockCredential` fails closed.*
->
-> *Every artifact and digest shown today is strictly synthetic and produced locally on this machine."*
+```powershell
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $env:WEB01_ID `
+  -Scenario Standard `
+  -PreflightOnly
+```
 
----
+> "Before it can take action, the orchestrator verifies the active Azure
+> session, Function App health and live-mode setting, the target subscription
+> and resource-group boundary, the custody Event Grid subscription, the VM's
+> disposable-demo tag, and its running state. This check is read-only."
 
-### 3. Live Scenario 1: High-Severity Incident Response (1:30 – 3:00)
+### 3. Standard containment and memory acquisition
 
-*(Action: Run `python scripts/demo.py --scenario 1` in terminal OR click 'Run Scenario 1' in the Web Dashboard at `http://127.0.0.1:8080`)*
+Run the live standard scenario. Confirm containment, acquisition, and (if
+approved) disk snapshots when prompted:
 
-> *"Let's trigger **Scenario 1**: Sentinel detects high-severity activity on Windows web server `web-01`.*
->
-> *Watch the stages execute:*
->
-> 1. **Ingress & Validation:** *The Sentinel alert payload is verified against our strict JSON schema contract (`docs/payload-contract.json`).*
-> 2. **Network Containment:** *Notice that `web-01` is **isolated, not deallocated**. Our `NetworkContainment` engine swaps a deny-by-default isolation NSG onto the primary NIC, blocking all inbound traffic and all outbound lateral movement, while preserving a single egress rule to Azure Storage for evidence transmission. The previous NSG ID is preserved for post-incident recovery.*
-> 3. **Volatile Memory Streaming (SOP 2 Phase 2):** *The OS is identified as Windows. A PowerShell bootstrap is synthesized and dispatched via Azure Run Command. Crucially: **zero bytes of the dump are written to the victim's disk**. WinPmem streams the image straight into our enclave container.*
-> 4. **Chain-of-Custody & Ledger (SOP 2 Phase 3):** *As the blob lands, Event Grid fires `BlobCreated`. Our `ChainOfCustody` service hashes the blob stream chunk-by-chunk in 8 MB buffers to preserve memory efficiency. It computes the SHA-256 digest, validates it against the target's witness hash, and appends an immutable block to our SQL Ledger hash chain.*
-> 5. **Non-Volatile Disk Snapshots:** *Per REQ-3.4.1, disk snapshotting is strictly gated on the memory ledger entry. Once verified, crash-consistent snapshots of the OS disk and data disk are generated and copied across the subscription boundary into the Forensic Enclave. A manifest blob is written and hashed.*
-> 6. **Forensic Analysis & Sanitized Record:** *Our analyzer extracts timeline events from evidence fixtures. Note that all generated case metadata is strictly sanitized — no SAS tokens or bearer credentials are leaked."*
+```powershell
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $env:WEB01_ID `
+  -Scenario Standard `
+  -CaptureDiskSnapshots `
+  -ConfirmLiveActions
+```
 
----
+> "The target remains powered on. The containment Function replaces its NIC
+> NSG association with a deny-by-default isolation NSG and saves the previous
+> associations in a local, secret-free recovery summary. After a second
+> confirmation, the acquisition Function dispatches the OS-appropriate memory
+> collector through Azure Run Command. The orchestrator waits for the
+> Event Grid and custody path to verify the evidence before requesting disk
+> snapshots."
 
-### 4. Scenario 2: Critical Infrastructure Policy Bypass (3:00 – 3:45)
+Point reviewers to the reported containment outcome, evidence blob name,
+custody SHA-256, disk snapshot count, and run-summary path. The script does not
+print or save Function keys or SAS URLs.
 
-*(Action: Run `python scripts/demo.py --scenario 2`)*
+### 4. Critical-infrastructure policy bypass (optional)
 
-> *"Now consider a real-world dilemma: What happens when the compromised VM is a hospital life-safety system, SCADA controller, or core banking database? Severing network links could cause catastrophic operational harm.*
->
-> *In **Scenario 2**, our Linux host `db-02` is tagged `Critical-Infrastructure: True`.*
->
-> *Notice the outcome in Stage 2:*
-> - *Network isolation is **BYPASSED** per organizational policy, keeping critical services online.*
-> - *However, forensic acquisition does not stop! The pipeline proceeds directly to acquire volatile memory using AVML in tmpfs (`/dev/shm`), takes disk snapshots, and records the full chain of custody in the Ledger.*
->
-> *This demonstrates policy-aware incident orchestration."*
+Use the separately tagged disposable Linux VM:
 
----
+```powershell
+.\scripts\run-azure-demo.ps1 `
+  -FunctionAppName $env:FUNC_APP_NAME `
+  -FunctionAppResourceGroup $env:ENCLAVE_RG `
+  -TargetVmId $env:DB02_ID `
+  -Scenario CriticalBypass `
+  -CaptureDiskSnapshots `
+  -ConfirmLiveActions
+```
 
-### 5. Error Transparency & Next Steps (3:45 – 4:30)
+> "The VM carries the critical-infrastructure tag, so the containment Function
+> reports `Bypassed` and does not change its NICs. The user must still confirm
+> live memory acquisition. The custody gate remains in force before disk
+> snapshots."
 
-*(Action: Run `python scripts/demo.py --scenario 3`)*
+### 5. Restore the standard test VM
 
-> *"In **Scenario 3**, when an invalid target or containment failure occurs, REACT halts downstream stages immediately. It does not fabricate success-shaped fallbacks or produce false evidence.*
->
-> *In summary:*
-> - **129 Automated Tests** *validate this entire baseline (`pytest -q`), including contract validation, mock isolation, and ledger digest chaining.*
-> - *For the final semester, our next steps are connecting the real Logic App in Azure, standing up the Bicep-provisioned Key Vault and Azure SQL Ledger, and running containerized Volatility 3 plugins in Azure Container Instances.*
->
-> *Thank you, and we welcome your questions."*
+After reviewers have inspected the isolated VM, use the recovery summary
+printed by the standard scenario:
 
----
+```powershell
+.\scripts\run-azure-demo.ps1 `
+  -RestoreFrom "<run-summary-path>" `
+  -ConfirmRestore
+```
 
-## Presenter Q&A Anticipation Guide
+> "Restoration is a separate, explicit action. Before changing each NIC, the
+> script verifies it still has this incident's isolation NSG. If another
+> operator changed the NIC, restoration stops rather than overwriting that
+> change."
 
-| Question | Recommended Answer |
-| :--- | :--- |
-| **Why not just stop/deallocate the VM?** | Deallocating a VM destroys volatile RAM instantly. Injected DLLs, rootkits, in-memory malware, and encryption keys are lost forever. Isolation retains power and volatile state while cutting off C2. |
-| **Why stream memory instead of writing to disk first?** | Writing a 16 GB raw dump to the victim's disk overwrites unallocated clusters, clobbers NTFS/ext4 journals, and alters file access timestamps — corrupting the very non-volatile evidence you need to analyze next. |
-| **Why copy snapshots to a different subscription?** | If an attacker compromised subscription Contributor permissions, they can delete local snapshots. The Forensic Enclave subscription is in an entirely separate RBAC administrative domain. |
-| **How is chain of custody proven?** | `ChainOfCustody` streams the blob from storage, hashes it with SHA-256, verifies it matches the host witness hash, and appends the entry to an Azure SQL Ledger table where each block contains `_PreviousDigest` and `_LedgerDigest` forming an unbroken cryptographic hash chain. |
-| **Is any real Azure money spent during this demo?** | No. `REACT_MOCK_MODE=true` runs process-locally on synthetic mocks. Zero Azure API calls or billable cloud resources are utilized. |
+Evidence blobs and disk snapshots are retained. The demo does not remove
+immutable evidence, delete snapshots, or delete the forensic enclave; handle
+retention and cleanup under the approved evidence policy.
+
+## Reviewer Q&A
+
+| Question | Suggested answer |
+|---|---|
+| Why not stop the VM? | Stopping or deallocating a VM destroys volatile memory. The standard flow isolates the network while leaving the test VM running. |
+| What does the demo change? | The standard scenario changes the test VM's NIC NSG association and runs memory acquisition. Disk snapshots are an additional opt-in action. |
+| How is evidence integrity checked? | The Blob-created event invokes the custody Function, which calculates a SHA-256 digest and records the result in the configured ledger path. The script waits for custody completion before requesting snapshots. |
+| Does this create Azure resources? | This runner does not deploy infrastructure or VMs. It uses pre-deployed Azure services and can create an incident isolation NSG, evidence blobs, and optionally disk snapshots. Those resources may incur charges. |
+| Does the script run the Logic App? | No. It calls the deployed Function endpoints directly for a controlled review. The Logic App workflow is a separate integration path. |
+| How do you restore the VM? | Use the secret-free run summary with `-RestoreFrom`; the script validates the current NIC state and requires a typed confirmation before restoring the saved NSG associations. |
