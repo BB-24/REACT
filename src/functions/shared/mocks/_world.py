@@ -402,7 +402,7 @@ def seed(world):
             EVIDENCE_ACCOUNT,
             container_name,
             legal_hold=True,
-            legal_hold_tags=["react-active-investigation"],
+            legal_hold_tags=["reacthold"],
             retention_days=2555,
             policy_locked=True,
         )

@@ -65,7 +65,7 @@ class TestPerson2WormStorage(unittest.TestCase):
             container = estate.container(EVIDENCE_ACCOUNT, name)
             self.assertEqual(container.retention_days, 2555)
             self.assertTrue(container.legal_hold)
-            self.assertIn("react-active-investigation", container.legal_hold_tags)
+            self.assertIn("reacthold", container.legal_hold_tags)
             self.assertTrue(container.policy_locked)
 
     def test_task_2_5_immutability_blocks_overwriting_and_deleting(self):

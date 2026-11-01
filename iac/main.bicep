@@ -59,10 +59,16 @@ param retentionDays int = 2555
 @description('Lock the retention policy. Irreversible: a locked policy cannot be shortened or removed, only extended. Leave false while testing.')
 param lockRetentionPolicy bool = false
 
-@description('Legal hold tags applied to the evidence container at creation (REQ-3.5.1).')
+@description('Legal hold tags applied to the evidence container at creation (REQ-3.5.1). Must be 3-23 alphanumeric characters.')
 param legalHoldTags array = [
-  'react-active-investigation'
+  'reacthold'
 ]
+
+@description('Hosting plan SKU name for Azure Functions. Default is B1 (Basic Linux tier, supported in Azure for Students without EP1 quota).')
+param hostingPlanSku string = 'B1'
+
+@description('Hosting plan tier for Azure Functions.')
+param hostingPlanTier string = 'Basic'
 
 @description('Lifetime of the write-only upload SAS, in minutes (REQ-3.3.3).')
 @minValue(5)
@@ -140,6 +146,11 @@ var keyVaultSecretsUser = subscriptionResourceId(
   forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
   '4633458b-17de-408a-b874-0445c86b69e6'
+)
+var storageQueueDataContributor = subscriptionResourceId(
+  forensicSubscriptionId,
+  'Microsoft.Authorization/roleDefinitions',
+  '974c5e8b-45b9-4653-a497-201554b9e771'
 )
 
 // --- Evidence storage (REQ-3.5.1) -------------------------------------------
@@ -273,6 +284,33 @@ resource toolsContainer 'Microsoft.Storage/storageAccounts/blobServices/containe
     publicAccess: 'None'
     metadata: {
       purpose: 'acquisition-tool-repository'
+    }
+  }
+}
+
+// --- Queue Storage for Asynchronous Forensic Acquisition (REQ-3.3.4) ---------
+
+resource queueServices 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: evidenceStorage
+  name: 'default'
+}
+
+resource acquisitionQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueServices
+  name: 'acquisition-jobs'
+  properties: {
+    metadata: {
+      purpose: 'asynchronous-forensic-acquisition-jobs'
+    }
+  }
+}
+
+resource acquisitionPoisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueServices
+  name: 'acquisition-jobs-poison'
+  properties: {
+    metadata: {
+      purpose: 'dead-letter-poison-queue-for-failed-acquisitions'
     }
   }
 }
@@ -715,12 +753,24 @@ resource ledgerDigestRoleAssignment 'Microsoft.Authorization/roleAssignments@202
 
 // --- Function App ------------------------------------------------------------
 
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: '${namePrefix}-law-${substring(suffix, 0, 8)}'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
   kind: 'web'
   properties: {
     Application_Type: 'web'
+    WorkspaceResourceId: logAnalyticsWorkspace.id
   }
 }
 
@@ -728,15 +778,13 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: hostingPlanName
   location: location
   sku: {
-    // Elastic Premium: hashing a multi-gigabyte image needs more than the
-    // Consumption plan's 10-minute ceiling and its cold-start behaviour.
-    name: 'EP1'
-    tier: 'ElasticPremium'
+    name: hostingPlanSku
+    tier: hostingPlanTier
   }
   properties: {
-    maximumElasticWorkerCount: 4
+    reserved: true
   }
-  kind: 'elastic'
+  kind: 'linux'
 }
 
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
@@ -801,6 +849,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: join(evidenceStoragePrivateEndpointPrefixes, ',')
         }
         { name: 'ACQUISITION_TIMEOUT_SECONDS', value: '5400' }
+        { name: 'ACQUISITION_QUEUE_NAME', value: 'acquisition-jobs' }
+        { name: 'POISON_QUEUE_NAME', value: 'acquisition-jobs-poison' }
       ]
     }
   }
@@ -850,6 +900,16 @@ resource functionKeyVaultSecrets 'Microsoft.Authorization/roleAssignments@2022-0
   }
 }
 
+resource functionQueueContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: evidenceStorage
+  name: guid(evidenceStorage.id, functionApp.id, 'queue-contributor')
+  properties: {
+    roleDefinitionId: storageQueueDataContributor
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // --- Outputs -----------------------------------------------------------------
 
 output storageAccountName string = evidenceStorage.name
@@ -873,6 +933,11 @@ output memoryDumpsContainer string = memoryDumpsContainer.name
 output diskSnapshotsContainer string = diskSnapshotsContainer.name
 output analysisOutputContainer string = analysisOutputContainer.name
 output reportsContainer string = reportsContainer.name
+output acquisitionQueueName string = acquisitionQueue.name
+output acquisitionPoisonQueueName string = acquisitionPoisonQueue.name
+output logAnalyticsWorkspaceId string = logAnalyticsWorkspace.id
+output logAnalyticsWorkspaceName string = logAnalyticsWorkspace.name
+output hostingPlanSku string = hostingPlan.sku.name
 
 @description('Grant this identity Network Contributor + Reader + Disk Snapshot rights on the TARGET subscription, and a contained DB user on the ledger database. See iac/scripts/init-sql-ledger.sql.')
 output postDeploymentPrincipal string = functionApp.identity.principalId

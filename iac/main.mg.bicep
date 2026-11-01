@@ -67,7 +67,7 @@ param lockRetentionPolicy bool = false
 
 @description('Legal hold tags applied when the evidence container is created.')
 param legalHoldTags array = [
-  'react-active-investigation'
+  'reacthold'
 ]
 
 @minValue(5)

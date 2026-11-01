@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "4856296611719037488"
+      "templateHash": "12090171289597518381"
     }
   },
   "parameters": {
@@ -70,10 +70,24 @@
     "legalHoldTags": {
       "type": "array",
       "defaultValue": [
-        "react-active-investigation"
+        "reacthold"
       ],
       "metadata": {
-        "description": "Legal hold tags applied to the evidence container at creation (REQ-3.5.1)."
+        "description": "Legal hold tags applied to the evidence container at creation (REQ-3.5.1). Must be 3-23 alphanumeric characters."
+      }
+    },
+    "hostingPlanSku": {
+      "type": "string",
+      "defaultValue": "B1",
+      "metadata": {
+        "description": "Hosting plan SKU name for Azure Functions. Default is B1 (Basic Linux tier, supported in Azure for Students without EP1 quota)."
+      }
+    },
+    "hostingPlanTier": {
+      "type": "string",
+      "defaultValue": "Basic",
+      "metadata": {
+        "description": "Hosting plan tier for Azure Functions."
       }
     },
     "sasTtlMinutes": {
@@ -191,6 +205,7 @@
     "storageBlobDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "storageBlobDelegator": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
     "keyVaultSecretsUser": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "storageQueueDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-a497-201554b9e771')]",
     "targetSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), variables('subnetName')), parameters('privateEndpointSubnetId'))]"
   },
   "resources": [
@@ -337,6 +352,40 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'acquisition-jobs')]",
+      "properties": {
+        "metadata": {
+          "purpose": "asynchronous-forensic-acquisition-jobs"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'acquisition-jobs-poison')]",
+      "properties": {
+        "metadata": {
+          "purpose": "dead-letter-poison-queue-for-failed-acquisitions"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageAccountName'), 'default')]"
       ]
     },
     {
@@ -783,14 +832,30 @@
       ]
     },
     {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}-law-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
       "type": "Microsoft.Insights/components",
       "apiVersion": "2020-02-02",
       "name": "[variables('appInsightsName')]",
       "location": "[parameters('location')]",
       "kind": "web",
       "properties": {
-        "Application_Type": "web"
-      }
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-law-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-law-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]"
+      ]
     },
     {
       "type": "Microsoft.Web/serverfarms",
@@ -798,13 +863,13 @@
       "name": "[variables('hostingPlanName')]",
       "location": "[parameters('location')]",
       "sku": {
-        "name": "EP1",
-        "tier": "ElasticPremium"
+        "name": "[parameters('hostingPlanSku')]",
+        "tier": "[parameters('hostingPlanTier')]"
       },
       "properties": {
-        "maximumElasticWorkerCount": 4
+        "reserved": true
       },
-      "kind": "elastic"
+      "kind": "linux"
     },
     {
       "type": "Microsoft.Web/sites",
@@ -924,6 +989,14 @@
             {
               "name": "ACQUISITION_TIMEOUT_SECONDS",
               "value": "5400"
+            },
+            {
+              "name": "ACQUISITION_QUEUE_NAME",
+              "value": "acquisition-jobs"
+            },
+            {
+              "name": "POISON_QUEUE_NAME",
+              "value": "acquisition-jobs-poison"
             }
           ]
         }
@@ -979,6 +1052,21 @@
       "dependsOn": [
         "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Web/sites', variables('functionAppName')), 'queue-contributor')]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageQueueDataContributor')]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2023-12-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
       ]
     },
     {
@@ -1121,6 +1209,26 @@
     "reportsContainer": {
       "type": "string",
       "value": "reports"
+    },
+    "acquisitionQueueName": {
+      "type": "string",
+      "value": "acquisition-jobs"
+    },
+    "acquisitionPoisonQueueName": {
+      "type": "string",
+      "value": "acquisition-jobs-poison"
+    },
+    "logAnalyticsWorkspaceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-law-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]"
+    },
+    "logAnalyticsWorkspaceName": {
+      "type": "string",
+      "value": "[format('{0}-law-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]"
+    },
+    "hostingPlanSku": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName')), '2023-12-01', 'full').sku.name]"
     },
     "postDeploymentPrincipal": {
       "type": "string",

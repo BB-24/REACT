@@ -58,7 +58,7 @@ def test_worm_containers_have_seven_year_retention_and_legal_hold(mock_estate, c
     container = mock_estate.container(EVIDENCE_ACCOUNT, container_name)
     assert container.retention_days == 2555
     assert container.legal_hold is True
-    assert "react-active-investigation" in container.legal_hold_tags
+    assert "reacthold" in container.legal_hold_tags
     assert container.policy_locked is True
 
 

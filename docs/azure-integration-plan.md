@@ -223,10 +223,11 @@ pass.
 4. Estimate actual costs for Function hosting, Storage, Event Grid, SQL
    (if included), and Application Insights. Set a budget or alert before
    deployment.
-5. Reconcile the current EP1 Function plan and SQL SKU with the demo workload.
-   Evaluate Flex Consumption for an appropriate low-volume workload, including
-   its required deployment configuration, or retain EP1 only with a documented
-   reason.
+5. Reconcile Function hosting and SQL SKU with the demo workload.
+   The B1 Basic Linux App Service Plan is selected for the Function App to fulfill 90-minute
+   execution requirements without EP1 quota failure, while retaining VNet integration
+   to the Storage Private Endpoint. Asynchronous acquisition uses Azure Queue Storage
+   with dead-letter poison queue handling.
 6. Record resource names, region, SKUs, expected cost, access method, budget,
    and cleanup plan in the deployment review.
 

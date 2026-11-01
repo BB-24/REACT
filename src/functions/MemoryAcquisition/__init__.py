@@ -306,9 +306,11 @@ def handle_acquisition(req, credential=None):
     summary = _parse_run_command_output(result)
 
     succeeded = summary.get("executionState") in (None, "Succeeded")
+    job_id = f"job-{sas.slug(str(incident_id))[:12]}"
     return _json_response(
         200 if succeeded else 502,
         {
+            "jobId": job_id,
             "status": "acquired" if succeeded else "acquisition-failed",
             "incidentId": str(incident_id),
             "targetVm": vm_name,
@@ -325,6 +327,41 @@ def handle_acquisition(req, credential=None):
             "custody": "pending-event-grid",
         },
     )
+
+
+def handle_status(req: func.HttpRequest) -> func.HttpResponse:
+    """Return asynchronous acquisition status for Logic App or orchestrator polling."""
+    incident_id = req.params.get("incidentId") or req.params.get("incident_id")
+    job_id = None
+    if hasattr(req, "route_params") and req.route_params:
+        job_id = req.route_params.get("job_id")
+    if not incident_id and not job_id:
+        return _json_response(400, {"error": "Missing 'incidentId' query parameter or 'job_id' route parameter."})
+
+    query_id = incident_id or job_id
+    try:
+        from shared import ledger
+        evidence = ledger.find_evidence(query_id, "memory-image")
+        if evidence:
+            return _json_response(200, {
+                "status": "Completed",
+                "incidentId": query_id,
+                "jobId": job_id or f"job-{sas.slug(str(query_id))[:12]}",
+                "artifactType": "memory-image",
+                "blobName": evidence.get("BlobName"),
+                "sha256": evidence.get("Sha256Hash"),
+                "sizeBytes": evidence.get("SizeBytes"),
+                "recordedUtc": str(evidence.get("RecordedUtc")),
+            })
+    except Exception as exc:
+        logging.warning("Error querying evidence ledger for status: %s", exc)
+
+    return _json_response(200, {
+        "status": "Processing",
+        "incidentId": query_id,
+        "jobId": job_id or f"job-{sas.slug(str(query_id))[:12]}",
+        "message": "Forensic acquisition job in progress; awaiting upload and Event Grid verification.",
+    })
 
 
 def _json_response(status_code, body):
@@ -345,3 +382,18 @@ def memory_acquisition(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as error:  # noqa: BLE001 - the Logic App needs a verdict
         logging.exception("Memory acquisition failed.")
         return _json_response(500, {"error": f"Memory acquisition failed: {error}"})
+
+
+@bp.route(route="MemoryAcquisition", methods=["POST"])
+def memory_acquisition_alias(req: func.HttpRequest) -> func.HttpResponse:
+    return memory_acquisition(req)
+
+
+@bp.route(route="status", methods=["GET"])
+def acquisition_status(req: func.HttpRequest) -> func.HttpResponse:
+    return handle_status(req)
+
+
+@bp.route(route="jobs/{job_id}", methods=["GET"])
+def acquisition_job_status(req: func.HttpRequest) -> func.HttpResponse:
+    return handle_status(req)
