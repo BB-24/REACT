@@ -14,6 +14,14 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
+try:
+    import azure.functions  # noqa: F401
+except (ImportError, ModuleNotFoundError):
+    try:
+        import tests.conftest  # noqa: F401
+    except (ImportError, ModuleNotFoundError):
+        pass
+
 
 MOCK_SETTINGS = {
     "REACT_MOCK_MODE": "true",

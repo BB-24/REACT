@@ -299,6 +299,39 @@ def handle_containment(req, credential=None):
     network_client = clients.network_client(subscription, cred=credential)
 
     vm = compute_client.virtual_machines.get(resource_group, vm_name)
+
+    # Check for Critical-Infrastructure bypass tag
+    vm_tags = getattr(vm, "tags", None) or {}
+    is_critical_infrastructure = any(
+        str(k).lower() == "critical-infrastructure" and str(v).lower() == "true"
+        for k, v in vm_tags.items()
+    )
+
+    if is_critical_infrastructure:
+        logging.warning(
+            "Incident %s: VM %s has Critical-Infrastructure:True tag. "
+            "Skipping network isolation per policy. Memory/disk acquisition will proceed.",
+            incident_id,
+            vm_name,
+        )
+        blob_name = sas.build_blob_name(incident_id, vm_name)
+        upload_url, expires_on = sas.mint_write_only_sas(blob_name, credential=credential)
+        return _json_response(
+            200,
+            {
+                "status": "bypassed",
+                "incidentId": str(incident_id),
+                "targetVm": vm_name,
+                "resourceGroup": resource_group,
+                "reason": "Critical-Infrastructure tag set to True",
+                "action": "Network isolation skipped; acquisition proceeds",
+                "criticalInfrastructureBypass": True,
+                "blobName": blob_name,
+                "uploadUrl": upload_url,
+                "uploadUrlExpiresOn": expires_on.isoformat(),
+            },
+        )
+
     nsg = ensure_isolation_nsg(network_client, resource_group, vm.location, incident_id)
     swaps = swap_nics(network_client, vm, nsg.id)
 

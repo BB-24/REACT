@@ -1,0 +1,3 @@
+Oct 24 00:00:01 web-server-01 systemd[1]: Started Daily apt upgrade and clean activities.
+Oct 24 00:01:05 web-server-01 CRON[1002]: (root) CMD (/usr/local/bin/healthcheck.sh >/dev/null 2>&1)
+Oct 24 00:02:10 web-server-01 kernel: [   12.345678] eth0: Link is Up - 1000Mbps/Full

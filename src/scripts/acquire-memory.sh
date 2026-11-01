@@ -1,0 +1,466 @@
+#!/usr/bin/env bash
+#
+# acquire-memory.sh -- stream Linux physical memory into the forensic enclave
+# without writing an image file to the target's disk (SOP 2, Phase 2).
+#
+# The acquisition tool writes the raw image to stdout or streams over loopback TCP.
+# This script slices that stream into fixed-size blocks and uploads each one with
+# the Azure Blob "Put Block" REST operation, committing them at the end with
+# "Put Block List".
+#
+# Why Put Block rather than a single upload: the plain "Put Blob" call requires
+# a Content-Length for the whole body, which is unknowable for a live stream,
+# and Azure Blob Storage rejects chunked transfer-encoding. AzCopy cannot read
+# from stdin at all. Sizing each block individually satisfies both constraints.
+#
+# One block at a time is staged in $STAGE_DIR, which defaults to /dev/shm -- a
+# tmpfs, i.e. RAM. Nothing reaches the block device. The script refuses to run
+# if the staging directory turns out to be disk-backed. Writing the image to
+# disk would overwrite unallocated space that may itself be evidence, and hands
+# an attacker on the host a copy of the artifact being collected.
+#
+# A SHA-256 is folded over the stream in flight. That "witness hash" is stamped
+# into the blob metadata; the ChainOfCustody function compares it to the hash it
+# computes server-side, so any change in transit is detectable.
+#
+# Requires root: reading physical memory needs kernel access.
+
+set -euo pipefail
+
+SAS_URL=""
+INCIDENT_ID=""
+SOURCE="auto"
+BLOCK_MB=64
+STAGE_DIR="/dev/shm"
+API_VERSION="2021-08-06"
+INITIATOR_OBJECT_ID=""
+AVML_PATH="$(dirname "$0")/tools/avml"
+TOOL_URL=""
+TOOL_SHA256=""
+LIME_MODULE=""
+LIME_SRC=""
+LIME_PORT=4444
+AZURE_MAX_BLOCKS=50000
+KEY_VAULT_URL=""
+SECRET_NAME="evidence-storage-key"
+UPLOADER="curl"
+
+usage() {
+    cat <<'USAGE'
+Usage: acquire-memory.sh --sas-url URL --incident-id ID [options]
+
+Required:
+  --sas-url URL            Write-only blob SAS URL (uploadUrl from
+                           NetworkContainment or Key Vault). Valid 60 minutes.
+                           (Alternatively, provide --key-vault-url)
+  --incident-id ID         Incident identifier, stamped into blob metadata.
+
+Key Vault integration (optional alternative to direct --sas-url):
+  --key-vault-url URL      Azure Key Vault URL to request write-only SAS from
+  --secret-name NAME       Secret name in Key Vault (default: evidence-storage-key)
+
+Options:
+  --source MODE            auto | avml | lime | kcore     (default: auto)
+  --avml-path PATH         AVML binary                    (default: ./tools/avml)
+  --tool-url URL           Read-only SAS for AVML in the tool repository;
+                           fetched into the tmpfs staging dir if the binary
+                           is not already present (REQ-3.3.2)
+  --tool-sha256 HEX        Expected SHA-256 of that binary. Strongly
+                           recommended: it is the only check between a
+                           tampered repository and running as root here
+  --lime-module PATH       lime.ko path; if omitted with --source lime,
+                           auto-detects kernel version or builds in tmpfs
+  --lime-src PATH          LiME source directory containing Makefile
+  --lime-port PORT         LiME TCP listener port         (default: 4444)
+  --block-mb N             Put Block size in MB           (default: 64)
+  --stage-dir DIR          tmpfs staging directory        (default: /dev/shm)
+  --uploader TOOL          Upload streaming tool: curl | azcopy (default: curl)
+  --initiator-object-id ID AAD object ID of the triggering Logic App
+  -h, --help               Show this help
+
+Acquisition sources:
+  avml   AVML writes LiME format to /dev/stdout. Preferred: no kernel module to
+         build, and it understands the memory layout of every major distro.
+  lime   LiME's own TCP listener (path=tcp:PORT), read back over loopback.
+         Auto-detects running kernel version (uname -r), uses pre-built module,
+         or builds LiME module in tmpfs if headers are present.
+  kcore  Read /proc/kcore. A last resort -- ELF-wrapped and only present when
+         the kernel was built with CONFIG_PROC_KCORE.
+USAGE
+}
+
+log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --sas-url)             SAS_URL="$2"; shift 2 ;;
+        --key-vault-url)       KEY_VAULT_URL="$2"; shift 2 ;;
+        --secret-name)         SECRET_NAME="$2"; shift 2 ;;
+        --incident-id)         INCIDENT_ID="$2"; shift 2 ;;
+        --source)              SOURCE="$2"; shift 2 ;;
+        --avml-path)           AVML_PATH="$2"; shift 2 ;;
+        --tool-url)            TOOL_URL="$2"; shift 2 ;;
+        --tool-sha256)         TOOL_SHA256="$2"; shift 2 ;;
+        --lime-module)         LIME_MODULE="$2"; shift 2 ;;
+        --lime-src)            LIME_SRC="$2"; shift 2 ;;
+        --lime-port)           LIME_PORT="$2"; shift 2 ;;
+        --block-mb)            BLOCK_MB="$2"; shift 2 ;;
+        --stage-dir)           STAGE_DIR="$2"; shift 2 ;;
+        --uploader)            UPLOADER="$2"; shift 2 ;;
+        --initiator-object-id) INITIATOR_OBJECT_ID="$2"; shift 2 ;;
+        -h|--help)             usage; exit 0 ;;
+        *)                     usage >&2; die "Unknown argument: $1" ;;
+    esac
+done
+
+# --- Key Vault SAS Retrieval (if requested) -----------------------------------
+
+request_sas_from_keyvault() {
+    local vault_url="$1" secret_name="$2"
+    log "Requesting Write-Only SAS from Key Vault at $vault_url for secret '$secret_name'..."
+
+    local token=""
+    # Request access token for Key Vault using VM Managed Identity via Azure IMDS
+    token="$(curl -s -f -H "Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net" 2>/dev/null | grep -o '"access_token":"[^"]*' | cut -d'"' -f4 || true)"
+
+    if [ -n "$token" ]; then
+        local secret_resp
+        secret_resp="$(curl -s -f -H "Authorization: Bearer $token" "${vault_url%/}/secrets/${secret_name}?api-version=7.4" 2>/dev/null || true)"
+        local val
+        val="$(printf '%s' "$secret_resp" | grep -o '"value":"[^"]*' | cut -d'"' -f4 || true)"
+        if [ -n "$val" ]; then
+            SAS_URL="$val"
+            log "Successfully retrieved Write-Only SAS from Key Vault via Managed Identity."
+            return 0
+        fi
+    elif command -v az >/dev/null 2>&1; then
+        local val
+        val="$(az keyvault secret show --vault-name "$vault_url" --name "$secret_name" --query value -o tsv 2>/dev/null || true)"
+        if [ -n "$val" ]; then
+            SAS_URL="$val"
+            log "Successfully retrieved Write-Only SAS from Key Vault via Azure CLI."
+            return 0
+        fi
+    fi
+
+    die "Failed to request SAS from Key Vault. Ensure Managed Identity or Azure CLI is authenticated."
+}
+
+if [ -z "$SAS_URL" ] && [ -n "$KEY_VAULT_URL" ]; then
+    request_sas_from_keyvault "$KEY_VAULT_URL" "$SECRET_NAME"
+fi
+
+# --- Preconditions -----------------------------------------------------------
+
+[ -n "$SAS_URL" ]     || { usage >&2; die "--sas-url or --key-vault-url is required."; }
+[ -n "$INCIDENT_ID" ] || { usage >&2; die "--incident-id is required."; }
+
+case "$SAS_URL" in
+    *\?*) : ;;
+    *) die "--sas-url has no query string; it is not a SAS URL." ;;
+esac
+
+[ "$(id -u)" -eq 0 ] || die "Must run as root: reading physical memory needs kernel access."
+
+for tool in curl dd sha256sum base64 stat; do
+    command -v "$tool" >/dev/null 2>&1 || die "Required tool not found: $tool"
+done
+
+[ -d "$STAGE_DIR" ] || die "Staging directory does not exist: $STAGE_DIR"
+
+# The no-disk-write guarantee rests entirely on this check.
+STAGE_FS="$(stat -f -c %T "$STAGE_DIR" 2>/dev/null || echo unknown)"
+case "$STAGE_FS" in
+    tmpfs|ramfs) log "Staging on $STAGE_DIR ($STAGE_FS): RAM-backed, no disk writes." ;;
+    *) die "Staging directory $STAGE_DIR is '$STAGE_FS', not tmpfs/ramfs. \
+Refusing to stage evidence on a block device (SOP 2, Phase 2.2)." ;;
+esac
+
+BLOCK_BYTES=$((BLOCK_MB * 1024 * 1024))
+STAGE_FILE="$STAGE_DIR/react-block-$$"
+BLOCK_IDS_FILE="$STAGE_DIR/react-blocks-$$"
+HASH_FILE="$STAGE_DIR/react-hash-$$"
+AVML_STAGED="$STAGE_DIR/react-avml-$$"
+SOURCE_HOST="$(hostname)"
+ACQUIRED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+LIME_LOADED=0
+BUILD_DIR=""
+
+cleanup() {
+    rm -f "$STAGE_FILE" "$BLOCK_IDS_FILE" "$HASH_FILE" "$AVML_STAGED"
+    if [ -n "$BUILD_DIR" ] && [ -d "$BUILD_DIR" ]; then
+        rm -rf "$BUILD_DIR"
+    fi
+    # LIME_LOADED is set inside the pipeline subshell, so it never propagates
+    # here; unload unconditionally whenever a module was supplied or loaded.
+    if [ "$LIME_LOADED" -eq 1 ] || [ -n "$LIME_MODULE" ]; then
+        rmmod lime 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# --- Acquisition sources -----------------------------------------------------
+
+detect_and_prepare_lime() {
+    local kver
+    kver="$(uname -r)"
+    log "Auto-detecting kernel version for LiME: $kver"
+
+    if [ -n "$LIME_MODULE" ] && [ -f "$LIME_MODULE" ]; then
+        log "Using specified LiME module: $LIME_MODULE"
+        return 0
+    fi
+
+    # Check common locations for pre-built LiME kernel module
+    local candidate
+    for candidate in \
+        "$STAGE_DIR/tools/lime-${kver}.ko" \
+        "$STAGE_DIR/tools/lime.ko" \
+        "$(dirname "$0")/tools/lime-${kver}.ko" \
+        "$(dirname "$0")/tools/lime.ko" \
+        "/lib/modules/${kver}/extra/lime.ko" \
+        "/lib/modules/${kver}/kernel/drivers/lime.ko"; do
+        if [ -f "$candidate" ]; then
+            log "Found pre-built LiME module for kernel $kver at: $candidate"
+            LIME_MODULE="$candidate"
+            return 0
+        fi
+    done
+
+    # If kernel build headers exist and make/gcc are available, build LiME in tmpfs (RAM)
+    if [ -d "/lib/modules/${kver}/build" ] && command -v make >/dev/null 2>&1 && command -v gcc >/dev/null 2>&1; then
+        local src_dir=""
+        for candidate_src in \
+            "$LIME_SRC" \
+            "$STAGE_DIR/tools/lime-src" \
+            "$(dirname "$0")/tools/lime-src" \
+            "/usr/src/lime" \
+            "/usr/src/lime-src"; do
+            if [ -n "$candidate_src" ] && [ -f "$candidate_src/Makefile" ]; then
+                src_dir="$candidate_src"
+                break
+            fi
+        done
+
+        if [ -n "$src_dir" ]; then
+            log "Building LiME kernel module for $kver in RAM (tmpfs)..."
+            BUILD_DIR="$STAGE_DIR/lime-build-$$"
+            mkdir -p "$BUILD_DIR"
+            cp -r "$src_dir"/* "$BUILD_DIR/"
+            if make -C "/lib/modules/${kver}/build" M="$BUILD_DIR" modules >/dev/null 2>&1; then
+                local built_mod
+                built_mod="$(find "$BUILD_DIR" -name "lime*.ko" 2>/dev/null | head -n 1 || true)"
+                if [ -n "$built_mod" ] && [ -f "$built_mod" ]; then
+                    LIME_MODULE="$STAGE_DIR/lime-${kver}-$$.ko"
+                    cp "$built_mod" "$LIME_MODULE"
+                    log "Successfully built LiME module in tmpfs: $LIME_MODULE"
+                    return 0
+                fi
+            fi
+            log "WARNING: In-memory compilation of LiME module failed."
+        fi
+    fi
+
+    return 1
+}
+
+resolve_source() {
+    if [ "$SOURCE" != "auto" ]; then
+        echo "$SOURCE"
+        return
+    fi
+    if [ -x "$AVML_PATH" ] || [ -n "$TOOL_URL" ] \
+        || command -v avml >/dev/null 2>&1; then
+        echo avml
+    elif detect_and_prepare_lime; then
+        echo lime
+    elif [ -r /proc/kcore ]; then
+        echo kcore
+    else
+        die "No usable acquisition source. Provide AVML via --avml-path or a \
+lime.ko via --lime-module, or install kernel headers for LiME build."
+    fi
+}
+
+# REQ-3.3.2: fetch the pre-compiled acquisition tool from the secure blob
+# repository over a read-only SAS. It lands in $STAGE_DIR, which has already
+# been proven to be tmpfs, so not even the tool binary touches the disk.
+fetch_tool() {
+    local url="$1" destination="$2" expected="$3"
+
+    log "Fetching acquisition tool from the tool repository."
+    curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+        "$url" -o "$destination" \
+        || die "Failed to download the acquisition tool."
+    [ -s "$destination" ] || die "Tool download produced an empty file."
+
+    if [ -n "$expected" ]; then
+        local actual
+        actual="$(sha256sum "$destination" | awk '{print $1}')"
+        if [ "$actual" != "$expected" ]; then
+            rm -f "$destination"
+            die "Acquisition tool hash mismatch. Expected $expected, got \
+$actual. The tool repository may be compromised; refusing to execute it."
+        fi
+        log "Acquisition tool hash verified."
+    else
+        log "WARNING: no --tool-sha256 supplied; running the tool unverified."
+    fi
+    chmod 0700 "$destination"
+}
+
+stream_avml() {
+    local binary="$AVML_PATH"
+    if [ ! -x "$binary" ] && [ -n "$TOOL_URL" ]; then
+        binary="$AVML_STAGED"
+        fetch_tool "$TOOL_URL" "$binary" "$TOOL_SHA256"
+    fi
+    [ -x "$binary" ] || binary="$(command -v avml || true)"
+    [ -n "$binary" ] && [ -x "$binary" ] \
+        || die "AVML not found or not executable. Supply --avml-path or --tool-url."
+    log "Acquiring via AVML to stdout."
+    exec "$binary" /dev/stdout
+}
+
+stream_lime() {
+    if [ -z "$LIME_MODULE" ] || [ ! -f "$LIME_MODULE" ]; then
+        detect_and_prepare_lime || die "LiME module not found and cannot be built for kernel $(uname -r)."
+    fi
+    [ -f "$LIME_MODULE" ] || die "LiME module not found: $LIME_MODULE"
+    command -v nc >/dev/null 2>&1 || die "netcat (nc) is required for LiME TCP mode."
+
+    log "Loading LiME with a TCP listener on port $LIME_PORT (no disk path)."
+    # insmod blocks until a client has drained the dump, so it runs in the
+    # background and the reader connects to it.
+    insmod "$LIME_MODULE" "path=tcp:$LIME_PORT" "format=lime" &
+    LIME_LOADED=1
+
+    local attempt=0
+    while [ "$attempt" -lt 30 ]; do
+        if nc -z 127.0.0.1 "$LIME_PORT" 2>/dev/null; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    [ "$attempt" -lt 30 ] || die "LiME listener never came up on port $LIME_PORT."
+
+    exec nc 127.0.0.1 "$LIME_PORT"
+}
+
+stream_kcore() {
+    [ -r /proc/kcore ] || die "/proc/kcore is not readable (CONFIG_PROC_KCORE off?)."
+    log "Acquiring via /proc/kcore. Note: ELF-wrapped, not a flat raw image."
+    exec cat /proc/kcore
+}
+
+stream_source() {
+    case "$(resolve_source)" in
+        avml)  stream_avml ;;
+        lime)  stream_lime ;;
+        kcore) stream_kcore ;;
+        *)     die "Unknown --source '$SOURCE'." ;;
+    esac
+}
+
+# --- Upload ------------------------------------------------------------------
+
+# Azure block IDs travel in the query string, so the base64 padding and the
+# non-URL-safe alphabet have to be percent-encoded.
+urlencode_block_id() {
+    printf '%s' "$1" | sed -e 's/+/%2B/g' -e 's|/|%2F|g' -e 's/=/%3D/g'
+}
+
+put_block() {
+    local block_id="$1" file="$2"
+    curl --fail --silent --show-error --retry 4 --retry-delay 2 \
+        --request PUT \
+        --header "x-ms-version: $API_VERSION" \
+        --header "Content-Type: application/octet-stream" \
+        --header "Expect:" \
+        --upload-file "$file" \
+        "${SAS_URL}&comp=block&blockid=$(urlencode_block_id "$block_id")" \
+        >/dev/null
+}
+
+put_block_list() {
+    local witness_hash="$1"
+    local body="$STAGE_DIR/react-blocklist-$$"
+    {
+        printf '<?xml version="1.0" encoding="utf-8"?><BlockList>'
+        while IFS= read -r id; do
+            printf '<Latest>%s</Latest>' "$id"
+        done < "$BLOCK_IDS_FILE"
+        printf '</BlockList>'
+    } > "$body"
+
+    curl --fail --silent --show-error --retry 4 --retry-delay 2 \
+        --request PUT \
+        --header "x-ms-version: $API_VERSION" \
+        --header "Content-Type: application/xml" \
+        --header "x-ms-blob-content-type: application/octet-stream" \
+        --header "x-ms-meta-incidentid: $INCIDENT_ID" \
+        --header "x-ms-meta-sourcehost: $SOURCE_HOST" \
+        --header "x-ms-meta-acquiredutc: $ACQUIRED_UTC" \
+        --header "x-ms-meta-witnesssha256: $witness_hash" \
+        --header "x-ms-meta-acquisitiontool: $(resolve_source)" \
+        --header "x-ms-meta-initiatorobjectid: $INITIATOR_OBJECT_ID" \
+        --data-binary "@$body" \
+        "${SAS_URL}&comp=blocklist" >/dev/null
+    rm -f "$body"
+}
+
+upload_stream() {
+    local index=0 total=0 size block_id
+    : > "$BLOCK_IDS_FILE"
+
+    while : ; do
+        # iflag=fullblock matters: without it dd stops at the first short read
+        # from the pipe and emits undersized blocks.
+        dd of="$STAGE_FILE" bs=1M count="$BLOCK_MB" iflag=fullblock 2>/dev/null || true
+        size="$(stat -c %s "$STAGE_FILE")"
+        [ "$size" -eq 0 ] && break
+
+        block_id="$(printf '%08d' "$index" | base64 | tr -d '\n')"
+        put_block "$block_id" "$STAGE_FILE"
+        printf '%s\n' "$block_id" >> "$BLOCK_IDS_FILE"
+
+        index=$((index + 1))
+        total=$((total + size))
+        if [ "$index" -ge "$AZURE_MAX_BLOCKS" ]; then
+            die "Reached Azure's $AZURE_MAX_BLOCKS-block limit. Re-run with a larger --block-mb."
+        fi
+        if [ $((index % 10)) -eq 0 ]; then
+            log "Uploaded $index blocks ($((total / 1024 / 1024)) MB)."
+        fi
+        # A short read means the source stream ended mid-block.
+        [ "$size" -lt "$BLOCK_BYTES" ] && break
+    done
+
+    printf '%s' "$total" > "$STAGE_DIR/react-total-$$"
+}
+
+# --- Main --------------------------------------------------------------------
+
+log "Starting Linux memory acquisition for incident $INCIDENT_ID on $SOURCE_HOST."
+log "Block size ${BLOCK_MB} MB; no image file will touch local disk."
+
+# tee forks the stream: one copy is hashed, one is uploaded. Both see identical
+# bytes, so the witness hash describes exactly what was stored.
+stream_source | tee >(sha256sum | awk '{print $1}' > "$HASH_FILE") | upload_stream
+
+[ -s "$BLOCK_IDS_FILE" ] || die "Acquisition produced no data; nothing uploaded."
+
+WITNESS_HASH="$(cat "$HASH_FILE")"
+TOTAL_BYTES="$(cat "$STAGE_DIR/react-total-$$" 2>/dev/null || echo 0)"
+BLOCK_COUNT="$(wc -l < "$BLOCK_IDS_FILE" | tr -d ' ')"
+rm -f "$STAGE_DIR/react-total-$$"
+
+log "Committing $BLOCK_COUNT blocks ($((TOTAL_BYTES / 1024 / 1024)) MB)."
+put_block_list "$WITNESS_HASH"
+
+log "Acquisition complete. Witness SHA-256: $WITNESS_HASH"
+# Output format matches P2-1 (Acquire-Memory.ps1) contract
+printf '{"incidentId":"%s","sourceHost":"%s","acquiredUtc":"%s","sizeBytes":%s,"blocks":%s,"witnessSha256":"%s"}\n' \
+    "$INCIDENT_ID" "$SOURCE_HOST" "$ACQUIRED_UTC" "$TOTAL_BYTES" "$BLOCK_COUNT" "$WITNESS_HASH"

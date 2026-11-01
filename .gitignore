@@ -4,7 +4,9 @@ __pycache__/
 .venv/
 venv/
 env/
-scripts/
+/scripts/*
+!/scripts/demo.py
+src/scripts/tools/
 
 # Azure Functions local settings (CRITICAL: Prevents leaking local connection strings)
 local.settings.json
@@ -26,4 +28,7 @@ node_modules/
 coverage.xml
 coverage_html/
 junit/
+sample-evidence-output/
+src/functions/.pytest_cache/
+src/functions/.coverage
 src/functions/.python_packages/

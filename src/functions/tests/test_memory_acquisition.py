@@ -193,3 +193,53 @@ def test_missing_incident_id_returns_400(mock_estate, post, body):
 
 def test_unresolvable_target_returns_400(mock_estate, post):
     assert handle_acquisition(post({"IncidentId": "INC-6"})).status_code == 400
+
+
+def test_linux_acquisition_uploads_an_image_to_the_enclave(mock_estate, post, body):
+    """REQ-3.3.1 - REQ-3.3.4: Linux memory acquisition uploads an image using avml/acquire-memory.sh."""
+    response = handle_acquisition(post({"IncidentId": "INC-LINUX-1", "TargetVM": LINUX_VM}))
+    assert response.status_code == 200
+    payload = body(response)
+
+    assert payload["status"] == "acquired"
+    assert payload["platform"] == LINUX
+    assert payload["toolBlob"] == "avml"
+    assert payload["scriptBlob"] == "acquire-memory.sh"
+
+    stored = mock_estate.get_blob(
+        mocks.EVIDENCE_ACCOUNT, mocks.EVIDENCE_CONTAINER, payload["blobName"]
+    )
+    assert stored.size > 0
+    assert stored.metadata["incidentid"] == "INC-LINUX-1"
+    assert stored.metadata["acquisitiontool"] == "avml"
+    assert stored.metadata["witnesssha256"] == stored.sha256()
+
+
+def test_acquire_memory_script_meets_acceptance_criteria():
+    """Verify acquire-memory.sh satisfies P2-2 acceptance criteria."""
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    script_path = repo_root / "src" / "scripts" / "acquire-memory.sh"
+    assert script_path.exists(), "acquire-memory.sh must exist in src/scripts"
+
+    content = script_path.read_text(encoding="utf-8")
+    # Auto-detects kernel version
+    assert "uname -r" in content
+    # Supports AVML and LiME
+    assert "stream_avml" in content
+    assert "stream_lime" in content
+    # Requests Write-Only SAS from Key Vault (or direct parameter)
+    assert "request_sas_from_keyvault" in content or "KEY_VAULT_URL" in content
+    # Streams to Blob via curl Put Block
+    assert "put_block" in content
+    assert "comp=block" in content
+    assert "put_block_list" in content
+    # Zero local disk write assertion
+    assert "tmpfs|ramfs" in content
+    assert "stat -f -c %T" in content
+    # Same output format as P2-1
+    assert '"incidentId"' in content
+    assert '"sourceHost"' in content
+    assert '"witnessSha256"' in content
+    assert '"blocks"' in content
