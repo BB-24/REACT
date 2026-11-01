@@ -385,6 +385,17 @@
             "maxEventsPerBatch": 1,
             "preferredBatchSizeInKilobytes": 64
           }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}-blob-pe', variables('storageAccountName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('targetSubnetId')]"
         },
         "filter": {
           "includedEventTypes": [
@@ -712,8 +723,9 @@
       "subscriptionId": "[parameters('targetSubscriptionId')]",
       "resourceGroup": "[parameters('targetResourceGroup')]",
       "properties": {
-        "expressionEvaluationOptions": {
-          "scope": "inner"
+        "sku": {
+          "family": "A",
+          "name": "standard"
         },
         "mode": "Incremental",
         "parameters": {
@@ -755,11 +767,18 @@
               }
             }
           ],
-          "outputs": {
-            "roleAssignmentId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId')))]"
-            }
+          "subjectBeginsWith": "[format('/blobServices/default/containers/{0}/', parameters('evidenceContainerName'))]",
+          "enableAdvancedFilteringOnArrays": true
+        },
+        "retryPolicy": {
+          "maxDeliveryAttempts": 30,
+          "eventTimeToLiveInMinutes": 1440
+        },
+        "deadLetterDestination": {
+          "endpointType": "StorageBlob",
+          "properties": {
+            "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+            "blobContainerName": "custody-deadletter"
           }
         }
       },

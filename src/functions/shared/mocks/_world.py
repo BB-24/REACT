@@ -31,6 +31,19 @@ EVIDENCE_ACCOUNT = "reactenclave01"
 EVIDENCE_CONTAINER = "evidence"
 TOOLS_CONTAINER = "tools"
 
+# P2-5 WORM storage containers
+MEMORY_DUMPS_CONTAINER = "memory-dumps"
+DISK_SNAPSHOTS_CONTAINER = "disk-snapshots"
+ANALYSIS_OUTPUT_CONTAINER = "analysis-output"
+REPORTS_CONTAINER = "reports"
+WORM_CONTAINERS = (
+    EVIDENCE_CONTAINER,
+    MEMORY_DUMPS_CONTAINER,
+    DISK_SNAPSHOTS_CONTAINER,
+    ANALYSIS_OUTPUT_CONTAINER,
+    REPORTS_CONTAINER,
+)
+
 KEY_VAULT_URI = "https://react-kv.vault.azure.net/"
 STORAGE_KEY_SECRET_NAME = "evidence-storage-key"
 
@@ -383,15 +396,16 @@ def seed(world):
     _add_vm(world, "web-01", "Windows", data_disk_count=1, attached_nsg_name="nsg-web-tier")
     _add_vm(world, "db-02", "Linux", data_disk_count=2, attached_nsg_name="nsg-db-tier")
 
-    # The forensic enclave, in its own subscription.
-    world.containers[(EVIDENCE_ACCOUNT, EVIDENCE_CONTAINER)] = MockContainer(
-        EVIDENCE_ACCOUNT,
-        EVIDENCE_CONTAINER,
-        legal_hold=True,
-        legal_hold_tags=["react-active-investigation"],
-        retention_days=2555,
-        policy_locked=True,
-    )
+    # The forensic enclave WORM containers, in its own subscription.
+    for container_name in WORM_CONTAINERS:
+        world.containers[(EVIDENCE_ACCOUNT, container_name)] = MockContainer(
+            EVIDENCE_ACCOUNT,
+            container_name,
+            legal_hold=True,
+            legal_hold_tags=["react-active-investigation"],
+            retention_days=2555,
+            policy_locked=True,
+        )
     # The tool repository is deliberately *not* immutable: WinPmem and AVML get
     # replaced whenever a new build is published.
     world.containers[(EVIDENCE_ACCOUNT, TOOLS_CONTAINER)] = MockContainer(
