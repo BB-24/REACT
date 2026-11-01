@@ -517,7 +517,33 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "[SUCCESS] Function App code successfully published." -ForegroundColor Green
 } else {
     Write-Host "[ERROR] Function App deployment failed." -ForegroundColor Red
+    exit 1
 }
+
+# 16.2 Activate Chain-of-Custody Event Grid Subscription
+# Now that the Function App is running and can answer Event Grid's validation handshake,
+# activate the chain-of-custody subscription.
+Write-Host "Activating Event Grid Chain-of-Custody Subscription..." -ForegroundColor Cyan
+Set-Location $env:REPO_ROOT
+
+az deployment group create `
+  --resource-group $env:ENCLAVE_RG `
+  --template-file "iac/main.bicep" `
+  --parameters `
+    "sqlAdminObjectId=$env:MY_OBJECT_ID" `
+    "sqlAdminLogin=$env:MY_UPN" `
+    "targetSubscriptionId=$env:SUB_ID" `
+    "targetResourceGroup=$env:TARGET_RG" `
+    "enableMockMode=false" `
+    "location=$env:LOCATION" `
+    "namePrefix=$env:NAME_PREFIX" `
+    "hostingPlanSku=B1" `
+    "hostingPlanTier=Basic" `
+    "legalHoldTags=['reacthold']" `
+    "deployEventGridSubscription=true" `
+  --output none
+
+Write-Host "[SUCCESS] Chain-of-Custody Event Grid subscription activated." -ForegroundColor Green
 ```
 
 ---

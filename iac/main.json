@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "12090171289597518381"
+      "templateHash": "1713226871844507268"
     }
   },
   "parameters": {
@@ -88,6 +88,13 @@
       "defaultValue": "Basic",
       "metadata": {
         "description": "Hosting plan tier for Azure Functions."
+      }
+    },
+    "deployEventGridSubscription": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Deploy Event Grid subscription for chain-of-custody. Leave false on initial infrastructure deployment until Function code is published; enable after publishing code so the webhook endpoint can answer validation."
       }
     },
     "sasTtlMinutes": {
@@ -205,7 +212,7 @@
     "storageBlobDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "storageBlobDelegator": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
     "keyVaultSecretsUser": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
-    "storageQueueDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-a497-201554b9e771')]",
+    "storageQueueDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
     "targetSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), variables('subnetName')), parameters('privateEndpointSubnetId'))]"
   },
   "resources": [
@@ -503,7 +510,7 @@
             "value": "[join(parameters('legalHoldTags'), ' ')]"
           }
         ],
-        "scriptContent": "      set -euo pipefail\r\n      for c in $CONTAINERS; do\r\n        echo \"Processing legal hold on container: $c\"\r\n        existing=$(az storage container legal-hold show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query \"tags\" -o tsv 2>/dev/null || echo \"\")\r\n        if [ -n \"$existing\" ]; then\r\n          echo \"Legal hold already present on $c: $existing\"\r\n        else\r\n          az storage container legal-hold set \\\r\n            --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n            --container-name \"$c\" --tags $TAGS\r\n          echo \"Legal hold applied to $c: $TAGS\"\r\n        fi\r\n\r\n        # Verify hold is active and fail deployment if not active (prevents false reporting)\r\n        has_hold=$(az storage container legal-hold show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query \"hasLegalHold\" -o tsv)\r\n        if [ \"$has_hold\" != \"true\" ]; then\r\n          echo \"ERROR: Legal hold verification failed on container $c\" >&2\r\n          exit 1\r\n        fi\r\n      done\r\n      echo \"Legal hold successfully verified on all evidence containers.\"\r\n    "
+        "scriptContent": "      set -euo pipefail\n      for c in $CONTAINERS; do\n        echo \"Processing legal hold on container: $c\"\n        existing=$(az storage container legal-hold show \\\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\n          --container-name \"$c\" --query \"tags\" -o tsv 2>/dev/null || echo \"\")\n        if [ -n \"$existing\" ]; then\n          echo \"Legal hold already present on $c: $existing\"\n        else\n          az storage container legal-hold set \\\n            --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\n            --container-name \"$c\" --tags $TAGS\n          echo \"Legal hold applied to $c: $TAGS\"\n        fi\n\n        # Verify hold is active and fail deployment if not active (prevents false reporting)\n        has_hold=$(az storage container legal-hold show \\\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\n          --container-name \"$c\" --query \"hasLegalHold\" -o tsv)\n        if [ \"$has_hold\" != \"true\" ]; then\n          echo \"ERROR: Legal hold verification failed on container $c\" >&2\n          exit 1\n        fi\n      done\n      echo \"Legal hold successfully verified on all evidence containers.\"\n    "
       },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', 'analysis-output', 'default')]",
@@ -547,7 +554,7 @@
             "value": "[format('{0} memory-dumps disk-snapshots analysis-output reports', parameters('evidenceContainerName'))]"
           }
         ],
-        "scriptContent": "      set -euo pipefail\r\n      for c in $CONTAINERS; do\r\n        etag=$(az storage container immutability-policy show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query etag -o tsv)\r\n        state=$(az storage container immutability-policy show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query state -o tsv)\r\n        if [ \"$state\" = \"Locked\" ]; then\r\n          echo \"Immutability policy already locked on $c.\"\r\n        else\r\n          az storage container immutability-policy lock \\\r\n            --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n            --container-name \"$c\" --if-match \"$etag\"\r\n          echo \"Immutability policy locked on $c.\"\r\n        fi\r\n      done\r\n    "
+        "scriptContent": "      set -euo pipefail\n      for c in $CONTAINERS; do\n        etag=$(az storage container immutability-policy show \\\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\n          --container-name \"$c\" --query etag -o tsv)\n        state=$(az storage container immutability-policy show \\\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\n          --container-name \"$c\" --query state -o tsv)\n        if [ \"$state\" = \"Locked\" ]; then\n          echo \"Immutability policy already locked on $c.\"\n        else\n          az storage container immutability-policy lock \\\n            --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\n            --container-name \"$c\" --if-match \"$etag\"\n          echo \"Immutability policy locked on $c.\"\n        fi\n      done\n    "
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deploymentScripts', format('{0}-apply-legal-hold', parameters('namePrefix')))]",
@@ -699,6 +706,7 @@
       ]
     },
     {
+      "condition": "[parameters('deployEventGridSubscription')]",
       "type": "Microsoft.EventGrid/systemTopics/eventSubscriptions",
       "apiVersion": "2023-12-15-preview",
       "name": "[format('{0}/{1}', variables('systemTopicName'), 'chain-of-custody')]",
@@ -897,6 +905,10 @@
             {
               "name": "FUNCTIONS_WORKER_RUNTIME",
               "value": "python"
+            },
+            {
+              "name": "AzureWebJobsStorage",
+              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', variables('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
             },
             {
               "name": "AzureWebJobsStorage__accountName",

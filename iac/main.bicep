@@ -70,6 +70,9 @@ param hostingPlanSku string = 'B1'
 @description('Hosting plan tier for Azure Functions.')
 param hostingPlanTier string = 'Basic'
 
+@description('Deploy Event Grid subscription for chain-of-custody. Leave false on initial infrastructure deployment until Function code is published; enable after publishing code so the webhook endpoint can answer validation.')
+param deployEventGridSubscription bool = false
+
 @description('Lifetime of the write-only upload SAS, in minutes (REQ-3.3.3).')
 @minValue(5)
 @maxValue(1440)
@@ -150,7 +153,7 @@ var keyVaultSecretsUser = subscriptionResourceId(
 var storageQueueDataContributor = subscriptionResourceId(
   forensicSubscriptionId,
   'Microsoft.Authorization/roleDefinitions',
-  '974c5e8b-45b9-4653-a497-201554b9e771'
+  '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 )
 
 // --- Evidence storage (REQ-3.5.1) -------------------------------------------
@@ -627,7 +630,7 @@ resource systemTopic 'Microsoft.EventGrid/systemTopics@2023-12-15-preview' = {
   }
 }
 
-resource custodySubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = {
+resource custodySubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = if (deployEventGridSubscription) {
   parent: systemTopic
   name: 'chain-of-custody'
   properties: {
@@ -806,6 +809,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
       appSettings: [
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
         { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'python' }
+        {
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${evidenceStorage.name};AccountKey=${evidenceStorage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+        }
         {
           name: 'AzureWebJobsStorage__accountName'
           value: evidenceStorage.name
