@@ -81,6 +81,30 @@ class TestNetworkContainment(unittest.TestCase):
         self.assertNotIn("!", name)
         self.assertLessEqual(len(name), 80)
 
+    def test_containment_rejects_resource_group_outside_configured_scope(self):
+        from src.functions.NetworkContainment import main
+
+        with (
+            unittest.mock.patch.dict(
+                "os.environ",
+                {
+                    "AZURE_SUBSCRIPTION_ID": "11111111-1111-1111-1111-111111111111",
+                    "TARGET_RESOURCE_GROUP": "approved-demo-rg",
+                },
+            ),
+            unittest.mock.patch(
+                "src.functions.NetworkContainment.clients.credential"
+            ) as credential,
+        ):
+            response = main(self._make_request(self.valid_payload))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            json.loads(response.get_body())["error"],
+            "Target VM is outside the configured resource-group boundary.",
+        )
+        credential.assert_not_called()
+
     def test_rule_payload_structure(self):
         allow_rule = _rule_payload("Allow-Storage", 100, "Outbound", "Allow", "Storage")
         self.assertEqual(allow_rule["priority"], 100)
@@ -107,7 +131,7 @@ class TestNetworkContainment(unittest.TestCase):
 
         # Build a fake VM object whose tags include the critical marker.
         fake_vm = MagicMock()
-        fake_vm.tags = {"Critical-Infrastructure": "true"}
+        fake_vm.tags = {"critical-infrastructure": "TRUE"}
         fake_vm.network_profile.network_interfaces = [
             MagicMock(
                 primary=True,
@@ -139,23 +163,37 @@ class TestNetworkContainment(unittest.TestCase):
         # Build a fake VM *without* the critical-infra tag.
         fake_vm = MagicMock()
         fake_vm.tags = {"Environment": "Production"}
+        fake_vm.location = "eastus"
         fake_vm.network_profile.network_interfaces = [
             MagicMock(
                 primary=True,
                 id="/subscriptions/11111111-1111-1111-1111-111111111111/"
                 "resourceGroups/Compromised-Environment-RG/"
                 "providers/Microsoft.Network/networkInterfaces/test-nic",
-            )
+            ),
+            MagicMock(
+                primary=False,
+                id="/subscriptions/11111111-1111-1111-1111-111111111111/"
+                "resourceGroups/Compromised-Environment-RG/"
+                "providers/Microsoft.Network/networkInterfaces/secondary-nic",
+            ),
         ]
         mock_compute_cls.return_value.virtual_machines.get.return_value = fake_vm
 
-        fake_nic = MagicMock()
-        fake_nic.network_security_group = None
-        mock_network_cls.return_value.network_interfaces.get.return_value = fake_nic
-        mock_network_cls.return_value.network_security_groups.get.return_value = MagicMock(
-            id="/subscriptions/11111111-1111-1111-1111-111111111111/"
-            "resourceGroups/Compromised-Environment-RG/"
-            "providers/Microsoft.Network/networkSecurityGroups/Forensic-Isolation-NSG-INC-2026-0001"
+        original_primary_nsg = (
+            "/subscriptions/11111111-1111-1111-1111-111111111111/"
+            "resourceGroups/Compromised-Environment-RG/providers/Microsoft.Network/networkSecurityGroups/original-primary"
+        )
+        primary_nic = MagicMock()
+        primary_nic.network_security_group = MagicMock(id=original_primary_nsg)
+        secondary_nic = MagicMock()
+        secondary_nic.network_security_group = None
+        network_client = mock_network_cls.return_value
+        network_client.network_interfaces.get.side_effect = [primary_nic, secondary_nic]
+        network_client.network_security_groups.get.return_value.id = (
+            "/subscriptions/11111111-1111-1111-1111-111111111111/"
+            "resourceGroups/Compromised-Environment-RG/providers/Microsoft.Network/"
+            "networkSecurityGroups/Forensic-Isolation-NSG-INC-2026-0001"
         )
 
         req = self._make_request(self.valid_payload)
@@ -164,9 +202,18 @@ class TestNetworkContainment(unittest.TestCase):
 
         self.assertEqual(body["status"], "Contained")
         self.assertFalse(body["CriticalInfrastructureBypass"])
+        self.assertEqual(body["PreviousNSGId"], original_primary_nsg)
+        self.assertEqual(len(body["NICContainment"]), 2)
         # NSG *should* have been created and attached.
-        mock_network_cls.return_value.network_security_groups.begin_create_or_update.assert_called()
-        mock_network_cls.return_value.network_interfaces.begin_create_or_update.assert_called()
+        network_client.network_security_groups.begin_create_or_update.assert_called_once()
+        self.assertEqual(network_client.network_interfaces.begin_create_or_update.call_count, 2)
+        created_nsg = network_client.network_security_groups.begin_create_or_update.call_args.args[
+            2
+        ]
+        rule_names = {rule["name"] for rule in created_nsg["security_rules"]}
+        self.assertIn("Allow-Evidence-Storage-Outbound", rule_names)
+        self.assertIn("Deny-All-Inbound", rule_names)
+        self.assertIn("Deny-All-Outbound", rule_names)
 
 
 if __name__ == "__main__":

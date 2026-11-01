@@ -54,6 +54,12 @@ class TestP1P2Integration(unittest.TestCase):
             test_mode_branch["actions"]["Return_Containment_Result"]["type"],
             "Response",
         )
+        self.assertEqual(
+            containment["Call_Network_Containment"]["runtimeConfiguration"]["secureData"][
+                "properties"
+            ],
+            ["inputs"],
+        )
         normal_branch = test_mode_branch["else"]["actions"]["Check_Containment_Success"]
         self.assertIn("Start_Acquisition_Workflow", normal_branch["actions"])
         self.assertIn("Start_Analysis_Pipeline", normal_branch["actions"])

@@ -5,8 +5,9 @@
 Extend the completed offline REACT prototype with a small, safe Azure-backed
 demo. The first cloud milestone should send **synthetic demo evidence** to
 Azure Blob Storage, process its event, record chain-of-custody metadata, and
-show telemetry. Network containment and evidence acquisition against real
-machines remain simulated.
+show telemetry. Live containment is a separate, opt-in milestone restricted to
+a dedicated disposable VM and resource group; never test against a production
+or investigator-owned machine.
 
 This is a plan only. No Azure resource should be created or changed until the
 subscription, region, expected costs, security settings, and deployment
@@ -69,8 +70,9 @@ containing only disposable demo resources.
 2. Review and commit the prototype changes before starting Azure integration.
 3. Keep the first milestone limited to synthetic Blob upload, Event Grid
    delivery, custody metadata, and monitoring.
-4. Explicitly exclude live VM containment, memory acquisition, disk snapshots,
-   and target-subscription access.
+4. Exclude production targets. Permit a separate isolated containment test
+   only after the disposable VM, restoration path, and narrowly scoped RBAC
+   have been reviewed.
 
 **Done when:** The selected commit and milestone boundary are recorded. No
 target-machine resource IDs or target permissions are needed for the planned
@@ -248,9 +250,10 @@ yet.
    rule from the demo configuration unless specifically justified.
 5. Configure HTTPS-only access, TLS 1.2+, Linux Functions, diagnostics, and
    non-anonymous Function authentication.
-6. Use managed identity with least privilege for the data path. Do not grant
-   Network Contributor, VM write, disk snapshot, Run Command, or target
-   subscription Reader permissions to the demo identity.
+6. Use managed identity with least privilege for the data path. The default
+   mock deployment receives no target permissions. For a separately approved
+   containment test, scope Network Contributor only to the dedicated demo
+   resource group; do not grant it at subscription scope.
 7. Keep storage keys and secrets out of source, parameter files, logs, and the
    browser. Use managed identity for Azure-hosted services and short-lived,
    narrowly scoped tokens only when required.
@@ -351,13 +354,15 @@ retryable.
    demo endpoints that operate on synthetic data.
 4. Review trigger exposure, managed identity audience, downstream
    authentication, run-history retention, retry count, and timeout behavior.
-5. Add and test a guard that prevents calls to real network containment,
-   acquisition, or disk-snapshot endpoints.
-6. Run a synthetic incident and inspect Logic App run history, Function traces,
-   storage output, and custody result.
+5. Confirm the containment Function enforces its configured subscription and
+   resource-group boundary, the Function identity has no broader network
+   permissions, and the request is limited to the disposable VM.
+6. Run the synthetic test payload through the guarded TestMode path and inspect
+   Logic App run history and Function traces. Do not start acquisition or
+   analysis as part of this containment-only test.
 
-**Done when:** A synthetic incident is orchestrated end to end and cannot
-address a live target resource.
+**Done when:** The test can affect only the explicitly scoped disposable VM,
+returns the containment contract, and leaves acquisition/analysis untouched.
 
 ### Step 12 — Rehearse, observe, and clean up
 
@@ -379,11 +384,11 @@ and clean up the approved disposable resources safely.
 
 ## Safety rules
 
-- Never connect this prototype to a real target VM or accept arbitrary target
-  resource IDs for cloud operations.
-- Keep compute/network actions simulated throughout this milestone. Do not
-  grant the demo identity Network Contributor, VM write, snapshot, Run Command,
-  or target subscription Reader.
+- Never connect this prototype to production or investigator-owned machines.
+- Keep compute/network actions mocked by default. Only a separate, explicitly
+  approved test may enable containment against a disposable VM in the dedicated
+  demo resource group. The Function validates the configured subscription and
+  resource-group boundary, and RBAC must remain at that group scope.
 - Mark synthetic evidence in UI, API responses, logs, and blob metadata.
 - Do not put credentials, Function keys, or SAS bearer URLs in source,
   screenshots, browser code, logs, or committed parameter files.

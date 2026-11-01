@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "412743951604040399"
+      "templateHash": "4329567098767713819"
     }
   },
   "parameters": {
@@ -104,6 +104,13 @@
       "defaultValue": "",
       "metadata": {
         "description": "Resource group containing those VMs."
+      }
+    },
+    "evidenceStoragePrivateEndpointPrefixes": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG."
       }
     },
     "enableMockMode": {
@@ -627,6 +634,10 @@
               "value": "[format('Storage.{0}', parameters('location'))]"
             },
             {
+              "name": "EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES",
+              "value": "[join(parameters('evidenceStoragePrivateEndpointPrefixes'), ',')]"
+            },
+            {
               "name": "ACQUISITION_TIMEOUT_SECONDS",
               "value": "5400"
             }
@@ -684,6 +695,69 @@
       "dependsOn": [
         "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "condition": "[and(not(parameters('enableMockMode')), not(empty(parameters('targetResourceGroup'))))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "network-containment-rbac",
+      "subscriptionId": "[parameters('targetSubscriptionId')]",
+      "resourceGroup": "[parameters('targetResourceGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2023-12-01', 'full').identity.principalId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.48.1.52935",
+              "templateHash": "3120716334517121796"
+            }
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Principal ID of the Function App Managed Identity to grant permissions."
+              }
+            }
+          },
+          "variables": {
+            "networkContributorRoleId": "4d97b98b-1d4f-4787-a291-c67834d212e7"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('networkContributorRoleId'))]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "description": "Grant Network Contributor on Compromised-Environment-RG to Forensic Containment Function App"
+              }
+            }
+          ],
+          "outputs": {
+            "roleAssignmentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
       ]
     }
   ],

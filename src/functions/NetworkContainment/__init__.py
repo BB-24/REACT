@@ -16,9 +16,9 @@ Two properties matter for forensic soundness:
   responder can restore the original network posture after the investigation.
 """
 
+import ipaddress
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -162,7 +162,29 @@ def build_isolation_rules(storage_prefix=None, extra_allow_tags=None, storage_po
         }
     ]
 
-    priority = ALLOW_STORAGE_PRIORITY + 10
+    private_endpoint_prefixes = _private_endpoint_prefixes()
+    for index, prefix in enumerate(private_endpoint_prefixes, start=1):
+        priority = ALLOW_STORAGE_PRIORITY + index
+        if priority >= DENY_ALL_PRIORITY:
+            raise config.ConfigError(
+                "EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES contains too many prefixes."
+            )
+        rules.append(
+            {
+                "name": f"Allow-Evidence-PrivateLink-{index}",
+                "priority": priority,
+                "direction": "Outbound",
+                "access": "Allow",
+                "protocol": "Tcp",
+                "source_address_prefix": "*",
+                "source_port_range": "*",
+                "destination_address_prefix": prefix,
+                "destination_port_range": str(storage_port),
+                "description": "Allow HTTPS to the configured evidence Storage Private Endpoint.",
+            }
+        )
+
+    priority = ALLOW_STORAGE_PRIORITY + max(10, len(private_endpoint_prefixes) + 1)
     for tag in extra_allow_tags or config.get_list("CONTAINMENT_EXTRA_ALLOW_TAGS"):
         rules.append(
             {
@@ -291,6 +313,10 @@ def handle_containment(req, credential=None):
         subscription, resource_group, vm_name = parse_target_vm(payload)
     except ContainmentError as error:
         return _json_response(400, {"error": str(error)})
+    try:
+        _validate_target_scope(subscription, resource_group)
+    except ContainmentError as error:
+        return _json_response(403, {"error": str(error)})
 
     logging.info("Containment requested for VM %s (incident %s).", vm_name, incident_id)
 
@@ -402,6 +428,16 @@ class ValidationError(ValueError):
     """A caller supplied a request that cannot safely be actioned."""
 
 
+def _validate_target_scope(subscription_id: str, resource_group: str) -> None:
+    allowed_subscription = config.get("AZURE_SUBSCRIPTION_ID")
+    if allowed_subscription and subscription_id.lower() != allowed_subscription.lower():
+        raise ContainmentError("Target VM is outside the configured subscription boundary.")
+
+    allowed_resource_group = config.get("TARGET_RESOURCE_GROUP")
+    if allowed_resource_group and resource_group.lower() != allowed_resource_group.lower():
+        raise ContainmentError("Target VM is outside the configured resource-group boundary.")
+
+
 @dataclass(frozen=True)
 class Incident:
     incident_id: str
@@ -473,8 +509,16 @@ def _nsg_name(incident_id: str) -> str:
 
 def _private_endpoint_prefixes() -> list[str]:
     """Read optional comma-separated IP/CIDR prefixes for evidence Private Endpoints."""
-    raw_prefixes = os.getenv("EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES", "")
-    return [prefix.strip() for prefix in raw_prefixes.split(",") if prefix.strip()]
+    raw_prefixes = config.get_list("EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES")
+    for prefix in raw_prefixes:
+        try:
+            ipaddress.ip_network(prefix, strict=False)
+        except ValueError as error:
+            raise config.ConfigError(
+                "EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES must contain only IP addresses "
+                "or CIDR prefixes."
+            ) from error
+    return raw_prefixes
 
 
 def _rule_payload(
@@ -494,38 +538,23 @@ def _rule_payload(
 
 
 def _create_isolation_nsg(
-    client: NetworkManagementClient, resource_group: str, incident_id: str
+    client: NetworkManagementClient,
+    resource_group: str,
+    incident_id: str,
+    location: str | None = None,
 ) -> str:
     nsg_name = _nsg_name(incident_id)
-    region = os.getenv("REGION_NAME", os.getenv("AZURE_REGION", "eastus"))
+    region = location or config.get("REGION_NAME", config.get("AZURE_REGION", "eastus"))
+    security_rules = build_isolation_rules()
     client.network_security_groups.begin_create_or_update(
         resource_group,
         nsg_name,
-        {"location": region, "tags": {"Purpose": "ForensicIsolation", "IncidentID": incident_id}},
+        {
+            "location": region,
+            "security_rules": security_rules,
+            "tags": {"Purpose": "ForensicIsolation", "IncidentID": incident_id},
+        },
     ).result()
-
-    # Lower numbers are evaluated first: permit only evidence-upload traffic
-    # before denying all other egress. The Storage service tag supports Azure
-    # Storage service endpoints; explicit prefixes support Private Endpoints.
-    rules = [_rule_payload("Allow-Azure-Storage-Egress", 100, "Outbound", "Allow", "Storage")]
-    for offset, prefix in enumerate(_private_endpoint_prefixes(), start=101):
-        if offset > 199:
-            raise ValidationError("At most 99 evidence private endpoint prefixes are supported.")
-        rules.append(
-            _rule_payload(
-                f"Allow-Evidence-PrivateLink-{offset}", offset, "Outbound", "Allow", prefix
-            )
-        )
-    rules.extend(
-        [
-            _rule_payload("Deny-All-Inbound", 4095, "Inbound", "Deny", "*"),
-            _rule_payload("Deny-All-Outbound", 4096, "Outbound", "Deny", "*"),
-        ]
-    )
-    for rule in rules:
-        client.security_rules.begin_create_or_update(
-            resource_group, nsg_name, rule["name"], rule
-        ).result()
     return nsg_name
 
 
@@ -546,6 +575,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         _, vm_resource_group, vm_name = _resource_parts(
             incident.target_vm, "providers/Microsoft.Compute/virtualMachines"
         )
+        _validate_target_scope(incident.subscription_id, vm_resource_group)
         credential = clients.credential()
         network_client = clients.network_client(incident.subscription_id, cred=credential)
         compute_client = clients.compute_client(incident.subscription_id, cred=credential)
@@ -553,8 +583,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         nic_id = _primary_nic_id(vm)
 
         # Check for Critical-Infrastructure tag
-        vm_tags = vm.tags or {}
-        is_critical_infrastructure = vm_tags.get("Critical-Infrastructure", "").lower() == "true"
+        vm_tags = getattr(vm, "tags", None) or {}
+        is_critical_infrastructure = any(
+            str(key).lower() == "critical-infrastructure" and str(value).lower() == "true"
+            for key, value in vm_tags.items()
+        )
 
         if is_critical_infrastructure:
             LOGGER.warning(
@@ -578,25 +611,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
-        _, nic_resource_group, nic_name = _resource_parts(
-            nic_id, "providers/Microsoft.Network/networkInterfaces"
+        nsg_name = _create_isolation_nsg(
+            network_client, vm_resource_group, incident.incident_id, location=vm.location
         )
-
-        nsg_name = _create_isolation_nsg(network_client, nic_resource_group, incident.incident_id)
-        nic = network_client.network_interfaces.get(nic_resource_group, nic_name)
-        previous_nsg_id = nic.network_security_group.id if nic.network_security_group else None
-        nic.network_security_group = {
-            "id": network_client.network_security_groups.get(nic_resource_group, nsg_name).id
-        }
-        network_client.network_interfaces.begin_create_or_update(
-            nic_resource_group, nic_name, nic
-        ).result()
+        nsg_id = network_client.network_security_groups.get(vm_resource_group, nsg_name).id
+        nic_changes = swap_nics(network_client, vm, nsg_id)
+        primary_nic_name = nic_id.rsplit("/", 1)[-1]
+        primary_change = next(change for change in nic_changes if change["nic"] == primary_nic_name)
 
         LOGGER.warning(
-            "Incident %s: attached isolation NSG %s to NIC %s",
+            "Incident %s: attached isolation NSG %s to VM %s",
             incident.incident_id,
             nsg_name,
-            nic_name,
+            vm_name,
         )
         return func.HttpResponse(
             json.dumps(
@@ -606,7 +633,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "TargetVM": incident.target_vm,
                     "NetworkInterface": nic_id,
                     "IsolationNSG": nsg_name,
-                    "PreviousNSGId": previous_nsg_id,
+                    "PreviousNSGId": primary_change["previousNsgId"],
+                    "NICContainment": nic_changes,
                     "CriticalInfrastructureBypass": False,
                 }
             ),
@@ -617,6 +645,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"status": "Rejected", "error": str(exc)}),
             status_code=400,
+            mimetype="application/json",
+        )
+    except ContainmentError as exc:
+        return func.HttpResponse(
+            json.dumps({"status": "Rejected", "error": str(exc)}),
+            status_code=403,
             mimetype="application/json",
         )
     except KeyError as exc:

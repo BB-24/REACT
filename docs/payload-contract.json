@@ -46,6 +46,10 @@
       "type": "string",
       "description": "Optional explicit Azure Resource Group name containing the target VM.",
       "examples": ["Compromised-Environment-RG"]
+    },
+    "TestMode": {
+      "type": "boolean",
+      "description": "Optional integration-test mode that returns containment output without starting acquisition or analysis. Use only with a dedicated disposable test VM."
     }
   },
   "additionalProperties": false

@@ -29,26 +29,33 @@ real Sentinel incident.
 
 ## Run and verify
 
-1. In Postman, choose the configured demo environment and inspect the request
+1. Establish an authorized SSH session and an HTTP health check against the
+   disposable VM; record both baseline results. Confirm the VM is running and
+   that the original NIC/NSG association is recorded for restoration.
+2. In Postman, choose the configured demo environment and inspect the request
    body. The request must remain `High` severity with `TestMode: true`.
-2. Change `allowContainment` to `true` only after confirming the dedicated demo
+3. Change `allowContainment` to `true` only after confirming the dedicated demo
    target and current NSG. The collection pre-request script skips execution
    unless that opt-in is enabled and the target resource ID matches the exact
    demo resource group and VM-name prefix.
-3. Send the request. The Logic App's TestMode branch returns the Function
+4. Send the request. The Logic App's TestMode branch returns the Function
    response directly and skips acquisition and analysis. The collection checks
    for HTTP 200, `status: "Contained"`, a non-empty `IsolationNSG`, and the
    presence of `PreviousNSGId` (which can be `null` if there was no prior NSG).
-4. Verify the corresponding Logic App run history shows `Parse_Incident`,
+5. From the same authorized client, verify SSH and HTTP no longer reach the VM.
+   Confirm the VM remains running through the Azure control plane; do not
+   attempt to recover access by restarting or deallocating it.
+6. Verify the corresponding Logic App run history shows `Parse_Incident`,
    `Call_Network_Containment`, and `Return_Containment_Result` succeeded. Keep
    the run ID and timestamp with the test record.
-5. Export the Postman Runner results as JSON and save the raw export in the
+7. Export the Postman Runner results as JSON and save the raw export in the
    team's access-controlled evidence store. Before sharing or committing any
    sanitized excerpt, remove the signed Logic App URL, function keys, private
    resource identifiers, subscription IDs, and any other sensitive values.
    Do not add raw run logs or environment exports to this repository.
-6. Restore the VM's original NSG association after the demonstration and verify
-   its connectivity.
+8. Restore the previously recorded NSG association through the approved
+   recovery procedure, then verify SSH and HTTP connectivity again. Confirm
+   the isolation NSG is no longer attached before ending the test.
 
 The repository contains the runnable collection and this evidence procedure,
 not a completed Azure execution log. A real Postman export can only be produced

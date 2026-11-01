@@ -78,6 +78,9 @@ param targetSubscriptionId string = subscription().subscriptionId
 @description('Resource group containing those VMs.')
 param targetResourceGroup string = ''
 
+@description('Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG.')
+param evidenceStoragePrivateEndpointPrefixes array = []
+
 @description('Deploy with the mock estate enabled. Never true for a real enclave.')
 param enableMockMode bool = false
 
@@ -551,9 +554,23 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
 
         { name: 'HASH_CHUNK_BYTES', value: '8388608' }
         { name: 'EVIDENCE_STORAGE_SERVICE_TAG', value: 'Storage.${location}' }
+        {
+          name: 'EVIDENCE_STORAGE_PRIVATE_ENDPOINT_PREFIXES'
+          value: join(evidenceStoragePrivateEndpointPrefixes, ',')
+        }
         { name: 'ACQUISITION_TIMEOUT_SECONDS', value: '5400' }
       ]
     }
+  }
+}
+
+// Target permissions are opt-in and limited to the configured target resource
+// group. Mock deployments never receive a role assignment on workload assets.
+module networkContainmentRbac 'modules/rbac.bicep' = if (!enableMockMode && !empty(targetResourceGroup)) {
+  name: 'network-containment-rbac'
+  scope: resourceGroup(targetSubscriptionId, targetResourceGroup)
+  params: {
+    principalId: functionApp.identity.principalId
   }
 }
 

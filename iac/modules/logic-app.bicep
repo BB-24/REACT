@@ -9,19 +9,18 @@ param logicAppName string = 'aacfp-incident-response'
 param containmentFunctionUrl string
 
 @description('ARM trigger-run endpoint for the acquisition workflow owned by Person 2 (for example .../triggers/manual/run?api-version=2016-06-01).')
-param acquisitionArmRequestUrl string = '${environment().resourceManager}providers/Microsoft.Logic/workflows/dummy-acquisition/triggers/manual/run?api-version=2016-06-01'
+param acquisitionArmRequestUrl string
 
 @description('Endpoint that returns evidence acquisition status. It must return { status: "Completed" } when ready.')
-param acquisitionStatusUrl string = '${environment().resourceManager}providers/Microsoft.Logic/workflows/dummy-acquisition/status'
+param acquisitionStatusUrl string
 
 
 @description('Endpoint for Person 3 analysis pipeline.')
-param analysisPipelineUrl string = 'https://forensic-analysis.azurewebsites.net/api/ProcessEvidence'
+@secure()
+param analysisPipelineUrl string
 
 @description('Blob URI format string. {0} is IncidentID and {1} is the target VM name.')
-param evidenceBlobUriTemplate string = 'https://forensicevidence.blob.${environment().suffixes.storage}/evidence/{0}/{1}.raw'
-
-
+param evidenceBlobUriTemplate string
 
 @description('Optional tags to apply to the Logic App.')
 param tags object = {}

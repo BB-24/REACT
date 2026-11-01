@@ -73,7 +73,7 @@ The ingress Webhook trigger and downstream calls enforce the standard JSON schem
    - Azure Logic App (Consumption plan, System-Assigned Managed Identity).
    - Azure Function App (Linux, Python 3.11 runtime, System-Assigned Managed Identity).
 3. **IAM & Role Assignments**:
-   - Function App Managed Identity is granted `Network Contributor` (ID `4d3025cd-af43-4a71-b66d-5710428f242c`) strictly scoped to `Compromised-Environment-RG`.
+   - When `targetResourceGroup` is set and mock mode is disabled, the Function App Managed Identity is granted `Network Contributor` (ID `4d97b98b-1d4f-4787-a291-c67834d212e7`) only at that resource-group scope. Leave `targetResourceGroup` empty for mock-only deployments.
 
 ### Phase 2: Python Network Containment (`NetworkContainment`)
 1. **Authentication**: `DefaultAzureCredential()` detects local identity in development and Managed Identity in Azure.
@@ -82,7 +82,7 @@ The ingress Webhook trigger and downstream calls enforce the standard JSON schem
    - Priority `101+` (`Outbound` / `Allow` / Destination: Evidence Private Endpoints if specified).
    - Priority `4095` (`Inbound` / `Deny` / Destination: `*`).
    - Priority `4096` (`Outbound` / `Deny` / Destination: `*`).
-3. **NIC Swap Execution**: Fetches the VM's primary NIC, replaces `network_security_group` reference with the isolation NSG, and triggers async ARM update.
+3. **NIC Swap Execution**: Replaces the network security group on every VM NIC with the isolation NSG and triggers the ARM updates. The response records each NIC's previous association and exposes the primary NIC's prior NSG as `PreviousNSGId`.
 
 ### Phase 3: Logic App Orchestration & Handoff Contracts
 1. **Sequential Action Pipeline**:
@@ -92,61 +92,39 @@ The ingress Webhook trigger and downstream calls enforce the standard JSON schem
    - `Wait_For_Evidence_Acquisition` -> Polls status until `Completed`.
    - `Start_Analysis_Pipeline` -> Calls Person 3 Cosmos DB / Analysis engine with Partition Key `IncidentID`.
 
+### Secure deployment order
+
+1. Create the resource groups using the subscription-scoped
+   [`resource-groups.bicep`](../iac/modules/resource-groups.bicep) module:
+   ```powershell
+   az deployment sub create --location eastus --template-file iac/modules/resource-groups.bicep
+   ```
+   Deploy the module in each subscription that needs its resource groups when
+   the workload and enclave subscriptions differ.
+2. Deploy [`main.bicep`](../iac/main.bicep) to `Forensic-Enclave-RG`. Set
+   `targetSubscriptionId` and `targetResourceGroup` to the approved workload
+   boundary to grant the Function identity Network Contributor only there.
+   The role assignment is omitted for mock mode and when the target group is
+   unset. Set `evidenceStoragePrivateEndpointPrefixes` to the storage Private
+   Endpoint IP/CIDR values if Private Link is used; the isolation NSG permits
+   HTTPS to those prefixes and the configured regional Storage service tag.
+3. Configure the acquisition and analysis endpoints owned by Persons 2 and 3,
+   then deploy [`logic-app.bicep`](../iac/modules/logic-app.bicep) to the
+   enclave resource group. Its endpoint parameters are required; the module
+   no longer falls back to placeholder URLs. Supply the Function URL as a
+   secure parameter and grant the Logic App identity only the downstream
+   permissions it needs.
+4. Verify the Function App route `/api/NetworkContainment`, the HTTP trigger
+   URL, managed identity role scope, and Logic App run history before sending
+   a test event. Never use a production target for the first run.
+
 ---
 
-## 4. Phase 4: Step-by-Step Guide for Independent Validation & Testing
+## 4. Independent Validation & Testing
 
-Follow these steps to validate the automated orchestration pipeline end-to-end:
-
-### Step 4.1: Staging the Environment
-1. Deploy a temporary Linux target VM in `Compromised-Environment-RG`:
-   ```bash
-   az vm create \
-     --resource-group Compromised-Environment-RG \
-     --name test-victim-vm \
-     --image Ubuntu2204 \
-     --admin-username azureuser \
-     --generate-ssh-keys \
-     --public-ip-address-dns-name test-victim-vm-dns
-   ```
-2. Open an active SSH session to `test-victim-vm`:
-   ```bash
-   ssh azureuser@<VM_PUBLIC_IP>
-   ```
-   *Keep this terminal window open during test execution.*
-
-### Step 4.2: Triggering the Webhook
-1. Retrieve the Logic App HTTP Webhook POST URL from Azure Portal or CLI:
-   ```bash
-   LOGIC_APP_URL=$(az logic workflow show \
-     --resource-group Forensic-Enclave-RG \
-     --name aacfp-incident-response \
-     --query "accessControl.triggers.Incident_Webhook.secretKeys[0]" -o tsv)
-   ```
-2. Fire a synthetic payload using `curl` or Postman:
-   ```bash
-   curl -X POST "$LOGIC_APP_WEBHOOK_URL" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "IncidentID": "INC-TEST-9999",
-       "TargetVM": "/subscriptions/<YOUR_SUBSCRIPTION_ID>/resourceGroups/Compromised-Environment-RG/providers/Microsoft.Compute/virtualMachines/test-victim-vm",
-       "IPAddress": "203.0.113.25",
-       "SubscriptionID": "<YOUR_SUBSCRIPTION_ID>",
-       "IncidentSeverity": "High",
-       "ResourceGroupName": "Compromised-Environment-RG"
-     }'
-   ```
-
-### Step 4.3: Verification Checklist
-1. **Logic App Execution**: Check Logic App **Run History** in Azure Portal. All actions (`Call_Network_Containment`, `Start_Acquisition_Workflow`, `Start_Analysis_Pipeline`) should show status `Succeeded` (green checks).
-2. **Function Log Output**: Check Function App log stream to confirm:
-   `Incident INC-TEST-9999: attached isolation NSG Forensic-Isolation-NSG-INC-TEST-9999 to NIC test-victim-vmVMNic`
-3. **Instant Connection Severance**: Return to your open SSH terminal window. You should see:
-   `client_loop: send disconnect: Connection reset by peer` or terminal freeze. Attempting a new `ssh` command must time out.
-4. **NSG Rules Verification**: Confirm the new NSG is bound to the target VM's NIC:
-   ```bash
-   az network nic show \
-     --resource-group Compromised-Environment-RG \
-     --name test-victim-vmVMNic \
-     --query "networkSecurityGroup.id"
-   ```
+Use the guarded, step-by-step disposable-VM procedure in
+[`p1-p2-postman-evidence.md`](./p1-p2-postman-evidence.md) as the source of truth
+for webhook testing, connectivity checks, Logic App run-history verification,
+evidence export, and NSG restoration. It requires explicit opt-in and a target
+in the dedicated demo resource group; do not use the older `test-victim-vm`
+example or test against production resources.

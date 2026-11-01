@@ -80,6 +80,9 @@
             "headers": { "Content-Type": "application/json" },
             "body": "@body('Parse_Incident')"
           },
+          "runtimeConfiguration": {
+            "secureData": { "properties": ["inputs"] }
+          },
           "runAfter": {}
         },
         "Containment_Test_Mode": {
@@ -122,6 +125,9 @@
                         "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))"
                       }
                     },
+                    "runtimeConfiguration": {
+                      "secureData": { "properties": ["inputs"] }
+                    },
                     "runAfter": {}
                   },
                   "Wait_For_Evidence_Acquisition": {
@@ -135,6 +141,9 @@
                           "method": "GET",
                           "uri": "@concat(parameters('acquisitionStatusUrl'), '?incidentId=', encodeUriComponent(body('Parse_Incident')?['IncidentID']))",
                           "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                        },
+                        "runtimeConfiguration": {
+                          "secureData": { "properties": ["inputs"] }
                         },
                         "runAfter": {}
                       },
@@ -163,6 +172,9 @@
                         "PipelineStatus": "AcquisitionCompleted",
                         "Timestamp": "@{utcNow()}"
                       }
+                    },
+                    "runtimeConfiguration": {
+                      "secureData": { "properties": ["inputs"] }
                     },
                     "runAfter": { "Wait_For_Evidence_Acquisition": ["Succeeded"] }
                   }
