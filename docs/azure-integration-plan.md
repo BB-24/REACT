@@ -103,9 +103,64 @@ demo remains usable as a fallback.
 
 1. Confirm `src/functions/host.json`, dependency files, all four blueprint
    registrations, and required Function App settings are present.
-2. Confirm how the Function App package will be built and deployed from the
-   Functions project root. Test package creation locally before provisioning.
-3. Build the top-level Bicep and every module. For example:
+2. Keep the Function App on the Python v2 programming model. The checked-in
+   `src/functions/NetworkContainment/function.json` was V1 metadata alongside
+   the V2 `function_app.py` and caused Core Tools to reject packaging. Remove
+   legacy V1 metadata only when its required route is preserved by a registered
+   V2 blueprint. The V2 app must continue to expose the expected
+   `/api/NetworkContainment` endpoint.
+
+   **Verified in this branch:** Removing the legacy
+   `NetworkContainment/function.json` allowed Core Tools to pass Python model
+   validation, and the V2 blueprint alias preserves the
+   `/api/NetworkContainment` route. The stale comment describing the V1 host
+   entrypoint was updated; the classic `main` helper remains for direct
+   compatibility/tests.
+
+3. Package and publish from `src/functions`, where `host.json` and
+   `requirements.txt` are at the app root. For a structural/local package
+   check, use a temporary output path:
+
+   ```powershell
+   Push-Location src\functions
+   func pack --output "$env:TEMP\react-functions-package"
+   Pop-Location
+   ```
+
+   This command validates the programming model and creates
+   `functions.zip`. In this branch, the archive contained root-level
+   `host.json`, `function_app.py`, all four blueprint modules, and no
+   `function.json`. Do not deploy a Windows-built archive to the Linux Function
+   App. This workspace uses Python 3.14 while the Bicep Function App targets
+   Python 3.11; the local package was observed to contain Windows CPython 3.14
+   native wheels, so this check proves package structure only, not Linux runtime
+   compatibility.
+4. For a local Linux-native dependency build, use
+   `func pack --build-native-deps` only when Docker is available and the build
+   environment uses the same Python version as the target Function App. Inspect
+   the resulting archive for root-level `host.json`, `function_app.py`, all
+   registered blueprint modules, `.python_packages`, and absence of legacy
+   `function.json` files and development-only files. Keep package output outside
+   the source tree.
+5. For actual code deployment, use Core Tools remote build from the Functions
+   project root after infrastructure exists and deployment has been separately
+   approved:
+
+   ```powershell
+   Push-Location src\functions
+   func azure functionapp publish <function-app-name> --build remote
+   Pop-Location
+   ```
+
+   Remote build installs `requirements.txt` in the Azure Linux/runtime
+   environment. Do not use `--publish-local-settings` for this prototype;
+   configure reviewed app settings through the approved deployment/IaC path.
+   The command publishes code and is not part of local validation. The installed
+   Core Tools reported that it was outdated; use a current supported Core Tools
+   release before any deployment.
+6. Add or review `.funcignore` so local settings, tests, caches, and other
+   development-only files are excluded from the deployment package.
+7. Build the top-level Bicep and every module. For example:
 
    ```powershell
    az bicep build --file iac/main.bicep
@@ -114,15 +169,17 @@ demo remains usable as a fallback.
    }
    ```
 
-4. Resolve compilation or linter errors. Confirm all required parameters,
+8. Resolve compilation or linter errors. Confirm all required parameters,
    module references, role assignments, outputs, and resource dependencies.
-5. Confirm the top-level Bicep includes or intentionally excludes the Logic App
+9. Confirm the top-level Bicep includes or intentionally excludes the Logic App
    module. Do not rely on an outdated generated ARM template.
-6. Trace the synthetic upload path through its Function handler, storage
+10. Trace the synthetic upload path through its Function handler, storage
    client, Event Grid event, custody handler, and optional SQL write.
 
-**Done when:** The package and Bicep source validate, and the complete first
-milestone path is mapped to actual handlers and deployment resources.
+**Done when:** Core Tools accepts the V2 project, the package layout and target
+runtime are verified, the Function build/deployment method is documented, and
+Bicep source validates. Do not treat a successful Windows package build as
+proof that the archive can run on Linux.
 
 ### Step 4 — Add explicit hybrid adapter modes
 

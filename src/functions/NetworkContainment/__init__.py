@@ -384,15 +384,12 @@ def network_containment_legacy(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ============================================================================
-# Legacy v1 contract (function.json entry point + Person 1 Logic App).
+# Legacy response contract for Person 1's Logic App.
 #
-# ``function.json`` still declares ``__init__.py`` as the script file for the
-# classic Functions host, which resolves the ``main`` entry point, and Person
-# 1's Logic App (``src/logic-apps/workflow.json``) was built against the
-# response contract below (``status`` of ``Contained``/``Bypassed``,
-# ``IsolationNSG``, and the Critical-Infrastructure tag bypass). The helpers
-# above power the v2 blueprint; this section keeps the deployed endpoint and
-# the P1<->P2 contract stable.
+# The classic ``main`` handler remains available to direct callers and tests,
+# while the Functions host uses the v2 blueprint registered in function_app.py.
+# This section preserves the P1<->P2 response contract (``Contained`` /
+# ``Bypassed``, ``IsolationNSG``, and the Critical-Infrastructure tag bypass).
 # ============================================================================
 
 _REQUIRED_FIELDS = {"IncidentID", "TargetVM", "IPAddress", "SubscriptionID", "IncidentSeverity"}

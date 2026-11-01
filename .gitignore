@@ -29,3 +29,6 @@ coverage.xml
 coverage_html/
 junit/
 sample-evidence-output/
+src/functions/.pytest_cache/
+src/functions/.coverage
+src/functions/.python_packages/
