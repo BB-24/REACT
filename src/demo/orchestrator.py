@@ -83,9 +83,7 @@ class StageOutcome:
     status: str  # "completed", "bypassed", "failed", "skipped"
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 @dataclass
@@ -99,9 +97,7 @@ class ScenarioResult:
     simulation_label: str
     stages: list[StageOutcome] = field(default_factory=list)
     sanitized_evidence: dict[str, Any] = field(default_factory=dict)
-    started_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -343,11 +339,7 @@ class DemoOrchestrator:
         delivered = mocks.drain_events()
         estate = mocks.world()
         memory_row = next(
-            (
-                r
-                for r in reversed(estate.ledger_rows)
-                if r.get("ArtifactType") == "memory-image"
-            ),
+            (r for r in reversed(estate.ledger_rows) if r.get("ArtifactType") == "memory-image"),
             None,
         )
 
@@ -361,12 +353,8 @@ class DemoOrchestrator:
                     "eventsProcessed": len(delivered),
                     "sha256": memory_row.get("Sha256Hash") if memory_row else "unknown",
                     "sizeBytes": memory_row.get("SizeBytes") if memory_row else 0,
-                    "ledgerEntryId": memory_row.get("LedgerEntryId")
-                    if memory_row
-                    else None,
-                    "ledgerDigest": memory_row.get("_LedgerDigest")
-                    if memory_row
-                    else None,
+                    "ledgerEntryId": memory_row.get("LedgerEntryId") if memory_row else None,
+                    "ledgerDigest": memory_row.get("_LedgerDigest") if memory_row else None,
                     "witnessHashMatch": True,
                 },
             )
@@ -594,12 +582,8 @@ class DemoOrchestrator:
                 details={
                     "sha256": memory_row.get("Sha256Hash") if memory_row else "unknown",
                     "sizeBytes": memory_row.get("SizeBytes") if memory_row else 0,
-                    "ledgerEntryId": memory_row.get("LedgerEntryId")
-                    if memory_row
-                    else None,
-                    "ledgerDigest": memory_row.get("_LedgerDigest")
-                    if memory_row
-                    else None,
+                    "ledgerEntryId": memory_row.get("LedgerEntryId") if memory_row else None,
+                    "ledgerDigest": memory_row.get("_LedgerDigest") if memory_row else None,
                 },
             )
         )
