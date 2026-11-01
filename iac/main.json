@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "14294624978932577723"
+      "templateHash": "4856296611719037488"
     }
   },
   "parameters": {
@@ -120,11 +120,57 @@
         "description": "Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG."
       }
     },
+    "functionIntegrationSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing subnet resource ID delegated to Microsoft.Web/serverFarms for Function App VNet integration. Required when using an existing private endpoint subnet."
+      }
+    },
+    "functionIntegrationSubnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.250.1.0/24",
+      "metadata": {
+        "description": "Address prefix used for the Function App integration subnet when this template creates the enclave VNet."
+      }
+    },
     "enableMockMode": {
       "type": "bool",
       "defaultValue": false,
       "metadata": {
         "description": "Deploy with the mock estate enabled. Never true for a real enclave."
+      }
+    },
+    "storagePublicNetworkAccess": {
+      "type": "string",
+      "defaultValue": "Disabled",
+      "allowedValues": [
+        "Enabled",
+        "Disabled"
+      ],
+      "metadata": {
+        "description": "Storage account public network access. The Function App is VNet-integrated to the Storage private endpoint."
+      }
+    },
+    "privateEndpointSubnetId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing subnet resource ID for the Storage private endpoint. Leave empty to create the enclave VNet and subnet."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.250.0.0/16",
+      "metadata": {
+        "description": "Address prefix used when this template creates the enclave VNet."
+      }
+    },
+    "subnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.250.0.0/24",
+      "metadata": {
+        "description": "Address prefix used for the private-endpoint subnet when this template creates the enclave VNet."
       }
     }
   },
@@ -138,9 +184,14 @@
     "sqlDatabaseName": "[format('{0}dfir', parameters('namePrefix'))]",
     "systemTopicName": "[format('{0}-evidence-topic', parameters('namePrefix'))]",
     "appInsightsName": "[format('{0}-ai-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
+    "actualVnetName": "[format('{0}-vnet-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))]",
+    "subnetName": "Forensic-Enclave-Subnet",
+    "functionIntegrationSubnetName": "Function-Integration-Subnet",
+    "actualFunctionIntegrationSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), variables('functionIntegrationSubnetName')), parameters('functionIntegrationSubnetId'))]",
     "storageBlobDataContributor": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "storageBlobDelegator": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')]",
-    "keyVaultSecretsUser": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]"
+    "keyVaultSecretsUser": "[subscriptionResourceId(parameters('forensicSubscriptionId'), 'Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "targetSubnetId": "[if(empty(parameters('privateEndpointSubnetId')), resourceId('Microsoft.Network/virtualNetworks/subnets', variables('actualVnetName'), variables('subnetName')), parameters('privateEndpointSubnetId'))]"
   },
   "resources": [
     {
@@ -164,10 +215,10 @@
         "allowSharedKeyAccess": true,
         "minimumTlsVersion": "TLS1_2",
         "supportsHttpsTrafficOnly": true,
-        "publicNetworkAccess": "Enabled",
+        "publicNetworkAccess": "[parameters('storagePublicNetworkAccess')]",
         "networkAcls": {
           "bypass": "AzureServices",
-          "defaultAction": "Allow"
+          "defaultAction": "[if(equals(parameters('storagePublicNetworkAccess'), 'Enabled'), 'Allow', 'Deny')]"
         }
       },
       "tags": {
@@ -209,6 +260,74 @@
     {
       "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
       "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'memory-dumps')]",
+      "properties": {
+        "publicAccess": "None",
+        "immutableStorageWithVersioning": {
+          "enabled": true
+        },
+        "metadata": {
+          "purpose": "volatile-memory-dumps"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'disk-snapshots')]",
+      "properties": {
+        "publicAccess": "None",
+        "immutableStorageWithVersioning": {
+          "enabled": true
+        },
+        "metadata": {
+          "purpose": "disk-snapshots"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'analysis-output')]",
+      "properties": {
+        "publicAccess": "None",
+        "immutableStorageWithVersioning": {
+          "enabled": true
+        },
+        "metadata": {
+          "purpose": "forensic-analysis-output"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'reports')]",
+      "properties": {
+        "publicAccess": "None",
+        "immutableStorageWithVersioning": {
+          "enabled": true
+        },
+        "metadata": {
+          "purpose": "forensic-investigation-reports"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', parameters('toolsContainerName'))]",
       "properties": {
         "publicAccess": "None",
@@ -230,6 +349,54 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', parameters('evidenceContainerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}/{3}', variables('storageAccountName'), 'default', 'memory-dumps', 'default')]",
+      "properties": {
+        "immutabilityPeriodSinceCreationInDays": "[parameters('retentionDays')]",
+        "allowProtectedAppendWrites": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', 'memory-dumps')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}/{3}', variables('storageAccountName'), 'default', 'disk-snapshots', 'default')]",
+      "properties": {
+        "immutabilityPeriodSinceCreationInDays": "[parameters('retentionDays')]",
+        "allowProtectedAppendWrites": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', 'disk-snapshots')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}/{3}', variables('storageAccountName'), 'default', 'analysis-output', 'default')]",
+      "properties": {
+        "immutabilityPeriodSinceCreationInDays": "[parameters('retentionDays')]",
+        "allowProtectedAppendWrites": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', 'analysis-output')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}/{3}', variables('storageAccountName'), 'default', 'reports', 'default')]",
+      "properties": {
+        "immutabilityPeriodSinceCreationInDays": "[parameters('retentionDays')]",
+        "allowProtectedAppendWrites": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', 'reports')]"
       ]
     },
     {
@@ -279,21 +446,25 @@
             "value": "[resourceGroup().name]"
           },
           {
-            "name": "CONTAINER",
-            "value": "[parameters('evidenceContainerName')]"
+            "name": "CONTAINERS",
+            "value": "[format('{0} memory-dumps disk-snapshots analysis-output reports', parameters('evidenceContainerName'))]"
           },
           {
             "name": "TAGS",
             "value": "[join(parameters('legalHoldTags'), ' ')]"
           }
         ],
-        "scriptContent": "      set -euo pipefail\r\n      # Idempotent: re-running a deployment must not fail on an existing hold.\r\n      existing=$(az storage container legal-hold show \\\r\n        --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n        --container-name \"$CONTAINER\" --query \"tags\" -o tsv || echo \"\")\r\n      if [ -n \"$existing\" ]; then\r\n        echo \"Legal hold already present: $existing\"\r\n      else\r\n        az storage container legal-hold set \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$CONTAINER\" --tags $TAGS\r\n        echo \"Legal hold applied: $TAGS\"\r\n      fi\r\n    "
+        "scriptContent": "      set -euo pipefail\r\n      for c in $CONTAINERS; do\r\n        echo \"Processing legal hold on container: $c\"\r\n        existing=$(az storage container legal-hold show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query \"tags\" -o tsv 2>/dev/null || echo \"\")\r\n        if [ -n \"$existing\" ]; then\r\n          echo \"Legal hold already present on $c: $existing\"\r\n        else\r\n          az storage container legal-hold set \\\r\n            --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n            --container-name \"$c\" --tags $TAGS\r\n          echo \"Legal hold applied to $c: $TAGS\"\r\n        fi\r\n\r\n        # Verify hold is active and fail deployment if not active (prevents false reporting)\r\n        has_hold=$(az storage container legal-hold show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query \"hasLegalHold\" -o tsv)\r\n        if [ \"$has_hold\" != \"true\" ]; then\r\n          echo \"ERROR: Legal hold verification failed on container $c\" >&2\r\n          exit 1\r\n        fi\r\n      done\r\n      echo \"Legal hold successfully verified on all evidence containers.\"\r\n    "
       },
       "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', 'analysis-output', 'default')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', 'disk-snapshots', 'default')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', parameters('evidenceContainerName'), 'default')]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-legalhold-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]",
         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-legalhold-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8))), 'contributor'))]",
-        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', parameters('evidenceContainerName'), 'default')]"
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', 'memory-dumps', 'default')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies', variables('storageAccountName'), 'default', 'reports', 'default')]"
       ]
     },
     {
@@ -323,16 +494,121 @@
             "value": "[resourceGroup().name]"
           },
           {
-            "name": "CONTAINER",
-            "value": "[parameters('evidenceContainerName')]"
+            "name": "CONTAINERS",
+            "value": "[format('{0} memory-dumps disk-snapshots analysis-output reports', parameters('evidenceContainerName'))]"
           }
         ],
-        "scriptContent": "      set -euo pipefail\r\n      etag=$(az storage container immutability-policy show \\\r\n        --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n        --container-name \"$CONTAINER\" --query etag -o tsv)\r\n      state=$(az storage container immutability-policy show \\\r\n        --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n        --container-name \"$CONTAINER\" --query state -o tsv)\r\n      if [ \"$state\" = \"Locked\" ]; then\r\n        echo \"Immutability policy already locked.\"\r\n      else\r\n        az storage container immutability-policy lock \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$CONTAINER\" --if-match \"$etag\"\r\n        echo \"Immutability policy locked.\"\r\n      fi\r\n    "
+        "scriptContent": "      set -euo pipefail\r\n      for c in $CONTAINERS; do\r\n        etag=$(az storage container immutability-policy show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query etag -o tsv)\r\n        state=$(az storage container immutability-policy show \\\r\n          --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n          --container-name \"$c\" --query state -o tsv)\r\n        if [ \"$state\" = \"Locked\" ]; then\r\n          echo \"Immutability policy already locked on $c.\"\r\n        else\r\n          az storage container immutability-policy lock \\\r\n            --account-name \"$ACCOUNT\" --resource-group \"$GROUP\" \\\r\n            --container-name \"$c\" --if-match \"$etag\"\r\n          echo \"Immutability policy locked on $c.\"\r\n        fi\r\n      done\r\n    "
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deploymentScripts', format('{0}-apply-legal-hold', parameters('namePrefix')))]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-legalhold-{1}', parameters('namePrefix'), substring(variables('suffix'), 0, 8)))]"
+      ]
+    },
+    {
+      "condition": "[empty(parameters('privateEndpointSubnetId'))]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('actualVnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('subnetAddressPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled"
+            }
+          },
+          {
+            "name": "[variables('functionIntegrationSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('functionIntegrationSubnetAddressPrefix')]",
+              "delegations": [
+                {
+                  "name": "functionAppDelegation",
+                  "properties": {
+                    "serviceName": "Microsoft.Web/serverFarms"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}-blob-pe', variables('storageAccountName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('targetSubnetId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "[format('{0}-blob-connection', variables('storageAccountName'))]",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+              "groupIds": [
+                "blob"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('actualVnetName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[format('privatelink.blob.{0}', environment().suffixes.storage)]",
+      "location": "global"
+    },
+    {
+      "condition": "[empty(parameters('privateEndpointSubnetId'))]",
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', format('privatelink.blob.{0}', environment().suffixes.storage), format('{0}-link', variables('actualVnetName')))]",
+      "location": "global",
+      "properties": {
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('actualVnetName'))]"
+        },
+        "registrationEnabled": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.blob.{0}', environment().suffixes.storage))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('actualVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', format('{0}-blob-pe', variables('storageAccountName')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "privatelink-blob-core-windows-net",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.blob.{0}', environment().suffixes.storage))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.blob.{0}', environment().suffixes.storage))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-blob-pe', variables('storageAccountName')))]"
       ]
     },
     {
@@ -385,17 +661,6 @@
             "maxEventsPerBatch": 1,
             "preferredBatchSizeInKilobytes": 64
           }
-        ]
-      }
-    },
-    {
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2023-11-01",
-      "name": "[format('{0}-blob-pe', variables('storageAccountName'))]",
-      "location": "[parameters('location')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('targetSubnetId')]"
         },
         "filter": {
           "includedEventTypes": [
@@ -553,6 +818,7 @@
       "properties": {
         "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
         "httpsOnly": true,
+        "virtualNetworkSubnetId": "[variables('actualFunctionIntegrationSubnetId')]",
         "siteConfig": {
           "linuxFxVersion": "Python|3.11",
           "ftpsState": "Disabled",
@@ -723,9 +989,8 @@
       "subscriptionId": "[parameters('targetSubscriptionId')]",
       "resourceGroup": "[parameters('targetResourceGroup')]",
       "properties": {
-        "sku": {
-          "family": "A",
-          "name": "standard"
+        "expressionEvaluationOptions": {
+          "scope": "inner"
         },
         "mode": "Incremental",
         "parameters": {
@@ -767,18 +1032,11 @@
               }
             }
           ],
-          "subjectBeginsWith": "[format('/blobServices/default/containers/{0}/', parameters('evidenceContainerName'))]",
-          "enableAdvancedFilteringOnArrays": true
-        },
-        "retryPolicy": {
-          "maxDeliveryAttempts": 30,
-          "eventTimeToLiveInMinutes": 1440
-        },
-        "deadLetterDestination": {
-          "endpointType": "StorageBlob",
-          "properties": {
-            "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
-            "blobContainerName": "custody-deadletter"
+          "outputs": {
+            "roleAssignmentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, parameters('principalId'), variables('networkContributorRoleId')))]"
+            }
           }
         }
       },
@@ -835,6 +1093,34 @@
     "enclaveSubscriptionId": {
       "type": "string",
       "value": "[parameters('forensicSubscriptionId')]"
+    },
+    "storagePrivateEndpointId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('{0}-blob-pe', variables('storageAccountName')))]"
+    },
+    "storagePrivateEndpointName": {
+      "type": "string",
+      "value": "[format('{0}-blob-pe', variables('storageAccountName'))]"
+    },
+    "blobPrivateDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', format('privatelink.blob.{0}', environment().suffixes.storage))]"
+    },
+    "memoryDumpsContainer": {
+      "type": "string",
+      "value": "memory-dumps"
+    },
+    "diskSnapshotsContainer": {
+      "type": "string",
+      "value": "disk-snapshots"
+    },
+    "analysisOutputContainer": {
+      "type": "string",
+      "value": "analysis-output"
+    },
+    "reportsContainer": {
+      "type": "string",
+      "value": "reports"
     },
     "postDeploymentPrincipal": {
       "type": "string",

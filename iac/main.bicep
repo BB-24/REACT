@@ -84,8 +84,30 @@ param targetResourceGroup string = ''
 @description('Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG.')
 param evidenceStoragePrivateEndpointPrefixes array = []
 
+@description('Existing subnet resource ID delegated to Microsoft.Web/serverFarms for Function App VNet integration. Required when using an existing private endpoint subnet.')
+param functionIntegrationSubnetId string = ''
+
+@description('Address prefix used for the Function App integration subnet when this template creates the enclave VNet.')
+param functionIntegrationSubnetAddressPrefix string = '10.250.1.0/24'
+
 @description('Deploy with the mock estate enabled. Never true for a real enclave.')
 param enableMockMode bool = false
+
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+@description('Storage account public network access. The Function App is VNet-integrated to the Storage private endpoint.')
+param storagePublicNetworkAccess string = 'Disabled'
+
+@description('Existing subnet resource ID for the Storage private endpoint. Leave empty to create the enclave VNet and subnet.')
+param privateEndpointSubnetId string = ''
+
+@description('Address prefix used when this template creates the enclave VNet.')
+param vnetAddressPrefix string = '10.250.0.0/16'
+
+@description('Address prefix used for the private-endpoint subnet when this template creates the enclave VNet.')
+param subnetAddressPrefix string = '10.250.0.0/24'
 
 var suffix = uniqueString(forensicSubscriptionId, resourceGroup().id)
 var storageAccountName = toLower('${namePrefix}enc${substring(suffix, 0, 8)}')
@@ -96,6 +118,12 @@ var sqlServerName = '${namePrefix}-sql-${substring(suffix, 0, 8)}'
 var sqlDatabaseName = '${namePrefix}dfir'
 var systemTopicName = '${namePrefix}-evidence-topic'
 var appInsightsName = '${namePrefix}-ai-${substring(suffix, 0, 8)}'
+var actualVnetName = '${namePrefix}-vnet-${substring(suffix, 0, 8)}'
+var subnetName = 'Forensic-Enclave-Subnet'
+var functionIntegrationSubnetName = 'Function-Integration-Subnet'
+var actualFunctionIntegrationSubnetId = empty(privateEndpointSubnetId)
+  ? resourceId('Microsoft.Network/virtualNetworks/subnets', actualVnetName, functionIntegrationSubnetName)
+  : functionIntegrationSubnetId
 
 // Built-in role definition IDs.
 var storageBlobDataContributor = subscriptionResourceId(
@@ -443,6 +471,20 @@ resource enclaveVnet 'Microsoft.Network/virtualNetworks@2023-11-01' = if (empty(
           privateEndpointNetworkPolicies: 'Disabled'
         }
       }
+      {
+        name: functionIntegrationSubnetName
+        properties: {
+          addressPrefix: functionIntegrationSubnetAddressPrefix
+          delegations: [
+            {
+              name: 'functionAppDelegation'
+              properties: {
+                serviceName: 'Microsoft.Web/serverFarms'
+              }
+            }
+          ]
+        }
+      }
     ]
   }
 }
@@ -707,6 +749,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: hostingPlan.id
     httpsOnly: true
+    virtualNetworkSubnetId: actualFunctionIntegrationSubnetId
     siteConfig: {
       linuxFxVersion: 'Python|3.11'
       ftpsState: 'Disabled'

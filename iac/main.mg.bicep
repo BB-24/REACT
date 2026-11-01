@@ -81,6 +81,28 @@ param logicAppPrincipalId string = ''
 @description('Storage Private Endpoint IP addresses or CIDR prefixes allowed by the isolation NSG.')
 param evidenceStoragePrivateEndpointPrefixes array = []
 
+@description('Existing subnet resource ID delegated to Microsoft.Web/serverFarms for Function App VNet integration. Required when using an existing private endpoint subnet.')
+param functionIntegrationSubnetId string = ''
+
+@description('Address prefix used for the Function App integration subnet when this template creates the enclave VNet.')
+param functionIntegrationSubnetAddressPrefix string = '10.250.1.0/24'
+
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+@description('Storage account public network access. The Function App is VNet-integrated to the Storage private endpoint.')
+param storagePublicNetworkAccess string = 'Disabled'
+
+@description('Existing subnet resource ID for the Storage private endpoint. Leave empty to create the enclave VNet and subnet.')
+param privateEndpointSubnetId string = ''
+
+@description('Address prefix used when this template creates the enclave VNet.')
+param vnetAddressPrefix string = '10.250.0.0/16'
+
+@description('Address prefix used for the private-endpoint subnet when this template creates the enclave VNet.')
+param subnetAddressPrefix string = '10.250.0.0/24'
+
 @description('Deploy with mock mode enabled. Mock deployments never grant workload access.')
 param enableMockMode bool = false
 
@@ -119,6 +141,12 @@ module forensicEnclave 'main.bicep' = {
     targetSubscriptionId: compromisedSubscriptionId
     targetResourceGroup: compromisedResourceGroupName
     evidenceStoragePrivateEndpointPrefixes: evidenceStoragePrivateEndpointPrefixes
+    functionIntegrationSubnetId: functionIntegrationSubnetId
+    functionIntegrationSubnetAddressPrefix: functionIntegrationSubnetAddressPrefix
+    storagePublicNetworkAccess: storagePublicNetworkAccess
+    privateEndpointSubnetId: privateEndpointSubnetId
+    vnetAddressPrefix: vnetAddressPrefix
+    subnetAddressPrefix: subnetAddressPrefix
     enableMockMode: enableMockMode
   }
 }

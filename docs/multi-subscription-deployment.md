@@ -18,6 +18,24 @@ The Function App identity receives Network Contributor only at
 `Compromised-Environment-RG`, and only when `enableMockMode` is false. No role
 is assigned at subscription or management-group scope.
 
+The enclave deploys a Blob Storage private endpoint and disables Storage public
+network access by default. The Function App is VNet-integrated to reach the
+private endpoint. By default, the template creates `react-vnet-<suffix>` with
+separate subnets: `10.250.0.0/24` for the private endpoint and
+`10.250.1.0/24` delegated to `Microsoft.Web/serverFarms` for Function App
+integration. Override `vnetAddressPrefix`, `subnetAddressPrefix`, and
+`functionIntegrationSubnetAddressPrefix` if these ranges overlap existing
+networks.
+
+To use an existing VNet, pass `privateEndpointSubnetId` for a subnet with
+private-endpoint network policies disabled and `functionIntegrationSubnetId`
+for a separate subnet in the same VNet delegated to `Microsoft.Web/serverFarms`.
+The Function integration subnet must have sufficient address space (at least
+`/28`; `/24` is recommended). Do not use the private-endpoint subnet for
+Function App integration. Keep `storagePublicNetworkAccess` set to `Disabled`
+unless an explicitly approved alternate private connectivity design is in
+place.
+
 ## Prerequisites
 
 - Both subscription IDs must be different and accessible from the deployment
