@@ -139,3 +139,28 @@ def sql_connection():
     import pyodbc
 
     return pyodbc.connect(config.require("SQL_CONNECTION_STRING"), timeout=30)
+
+
+def cosmos_client(endpoint=None, cred=None):
+    """Cosmos DB Core (SQL) client (REQ-3.6 / P3-3)."""
+    if mock_mode():
+        from . import mocks
+
+        return mocks.MockCosmosClient(
+            url=endpoint
+            or config.get("COSMOS_DB_ENDPOINT", "https://mock-cosmos.documents.azure.com:443/"),
+            credential=cred or credential(),
+        )
+    from azure.cosmos import CosmosClient
+
+    url = endpoint or config.require("COSMOS_DB_ENDPOINT")
+    return CosmosClient(url=url, credential=cred or credential())
+
+
+def cosmos_container_client(endpoint=None, database_name=None, container_name=None, cred=None):
+    """Convenience helper returning a ContainerClient for timeline artifacts."""
+    client = cosmos_client(endpoint=endpoint, cred=cred)
+    db_name = database_name or config.get("COSMOS_DB_DATABASE", "react-forensic-db")
+    cont_name = container_name or config.get("COSMOS_DB_CONTAINER", "timeline-artifacts")
+    db_client = client.get_database_client(db_name)
+    return db_client.get_container_client(cont_name)

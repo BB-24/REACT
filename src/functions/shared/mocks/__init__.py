@@ -15,6 +15,15 @@ from ._compute import (
     parse_blob_sas_url,
     synthesize_memory_image,
 )
+from ._cosmos import (
+    CosmosError,
+    CosmosHttpResponseError,
+    CosmosResourceExistsError,
+    CosmosResourceNotFoundError,
+    MockContainerClient,
+    MockCosmosClient,
+    MockDatabaseClient,
+)
 from ._keyvault import MockSecretClient
 from ._network import MockNetworkManagementClient
 from ._sql import MockSqlConnection
@@ -127,6 +136,10 @@ def snapshot_state():
 __all__ = [
     "ANALYSIS_OUTPUT_CONTAINER",
     "COMPROMISED_SUBSCRIPTION",
+    "CosmosError",
+    "CosmosHttpResponseError",
+    "CosmosResourceExistsError",
+    "CosmosResourceNotFoundError",
     "DEFAULT_IMAGE_BYTES",
     "DISK_SNAPSHOTS_CONTAINER",
     "ENCLAVE_RESOURCE_GROUP",
@@ -134,6 +147,7 @@ __all__ = [
     "EVIDENCE_ACCOUNT",
     "EVIDENCE_CONTAINER",
     "FAKE_ACCOUNT_KEY",
+    "ImmutabilityError",
     "KEY_VAULT_URI",
     "LOGIC_APP_PRINCIPAL_ID",
     "MEMORY_DUMPS_CONTAINER",
@@ -147,11 +161,17 @@ __all__ = [
     "MockBlobClient",
     "MockBlobServiceClient",
     "MockComputeManagementClient",
+    "MockContainerClient",
+    "MockCosmosClient",
     "MockCredential",
+    "MockDatabaseClient",
     "MockNetworkManagementClient",
     "MockSecretClient",
     "MockSqlConnection",
     "Model",
+    "STORAGE_KEY_SECRET_NAME",
+    "TARGET_RESOURCE_GROUP",
+    "TOOLS_CONTAINER",
     "World",
     "drain_events",
     "parse_blob_sas_url",
