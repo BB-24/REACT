@@ -181,21 +181,77 @@ ruff format src/ tests/
 
 ### 3.7 Forensic Analyzer Container (Plaso Timeline)
 
-Build the forensic analyzer image:
+The forensic analyzer container performs artifact triage and timeline extraction from disk images and log artifacts using Plaso (`log2timeline` and `psort`).
+
+#### 3.7.1 Local Verification Script
+Run the automated verification script that verifies Docker availability, prepares sample evidence, builds the image, and executes verification:
+```bash
+bash src/containers/forensic-analyzer/verify-local.sh
+```
+
+#### 3.7.2 Manual Local Docker Commands
+
+1. **Build the container image**:
 ```bash
 docker build -t react-forensic-analyzer src/containers/forensic-analyzer
 ```
 
-Run timeline extraction with evidence mounted read-only at `/workspace/input`:
+2. **Execute timeline extraction with read-only sample evidence**:
 ```bash
 docker run --rm \
-  -v "$(pwd)/evidence:/workspace/input:ro" \
-  -v "$(pwd)/output:/workspace/output" \
+  -v "$(pwd)/sample-evidence:/workspace/input:ro" \
+  -v "$(pwd)/sample-evidence-output:/workspace/output" \
   react-forensic-analyzer
 ```
 
-On success, the container writes timeline output to:
-`/workspace/output/timeline.json`
+3. **Execute with direct default parser set (optional)**:
+```bash
+docker run --rm \
+  -e PLASO_PARSERS="default" \
+  -v "$(pwd)/sample-evidence:/workspace/input:ro" \
+  -v "$(pwd)/sample-evidence-output:/workspace/output" \
+  react-forensic-analyzer
+```
+
+#### 3.7.3 Expected Logs
+
+- **Standard Execution (Configured Parsers Mode)**:
+```text
+[forensic-entrypoint] Running log2timeline using configured parsers mode: amcache,bash_history,bencode,...
+[forensic-entrypoint] Extraction completed successfully using configured parsers mode.
+[forensic-entrypoint] Running psort and writing JSON timeline to /workspace/output/timeline.json.
+[forensic-entrypoint] Timeline generation completed successfully: /workspace/output/timeline.json
+```
+
+- **Parser Fallback Execution (When configured parser list contains unsupported names)**:
+```text
+[forensic-entrypoint] Running log2timeline using configured parsers mode: amcache,bash_history,bencode,...
+[forensic-entrypoint] WARNING: log2timeline failed with configured parsers (...). Safely retrying using Plaso default parser set mode...
+[forensic-entrypoint] Running log2timeline using Plaso default parser set mode.
+[forensic-entrypoint] Extraction completed successfully using Plaso default parser set mode.
+[forensic-entrypoint] Running psort and writing JSON timeline to /workspace/output/timeline.json.
+[forensic-entrypoint] Timeline generation completed successfully: /workspace/output/timeline.json
+```
+
+#### 3.7.4 Expected Exit Codes
+- `0`: Successful execution. Input was parsed and a non-empty timeline JSON file was written.
+- `1`: Failure. Occurs if `/workspace/input` does not exist, no evidence files are found, or tool execution fails.
+
+#### 3.7.5 Output Path and Evidence Preservation
+- **Timeline Output**: Written to `/workspace/output/timeline.json` (mapped to host output directory).
+- **Input Preservation**: Evidence is mounted read-only (`:ro`) at `/workspace/input`. The container operates without mutating evidence files, upholding cryptographic chain of custody integrity.
+
+#### 3.7.6 Azure Container Instances (ACI) Guidance
+- **Task Lifecycle**: Deploy as a single-run batch job with `restartPolicy: "Never"` or `"OnFailure"`.
+- **Volume Mounts**:
+  - Mount the evidence share (Azure File Share or Blob NFS/BlobFuse) to `/workspace/input` with `readOnly: true`.
+  - Mount the results share to `/workspace/output` with write permissions.
+- **Resource Sizing**: Allocate a minimum of 2 vCPUs and 4 GiB memory to accommodate Plaso memory requirements during parsing.
+- **Environment Variables**:
+  - `FORENSIC_INPUT_DIR`: `/workspace/input`
+  - `FORENSIC_OUTPUT_DIR`: `/workspace/output`
+  - `PLASO_PARSERS`: `default` (or specific compatible parser list)
+- *Note: Downstream Cosmos DB indexing and PDF reporting are executed by separate pipeline stages after container exit and should not be bundled inside this container.*
 
 ---
 
