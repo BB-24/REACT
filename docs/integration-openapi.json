@@ -1,0 +1,716 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "REACT Person 2/3 Integration API",
+    "version": "1.0.0",
+    "description": "Cross-person HTTP contracts for evidence acquisition, forensic analysis, Cosmos DB artifact records, and report generation. Azure resource IDs, hostnames, and credentials are deployment-specific.",
+    "externalDocs": {
+      "description": "Azure Logic Apps Workflow Triggers - Run REST API",
+      "url": "https://learn.microsoft.com/en-us/rest/api/logic/workflow-triggers/run?view=rest-logic-2016-06-01"
+    }
+  },
+  "paths": {
+    "/triggers/manual/run": {
+      "post": {
+        "summary": "Start evidence acquisition",
+        "description": "Invokes the Person 2 Logic App manual trigger through Azure Resource Manager. The Logic App managed identity token audience is https://management.azure.com/.",
+        "servers": [
+          {
+            "url": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Logic/workflows/{workflowName}",
+            "variables": {
+              "subscriptionId": {
+                "default": "00000000-0000-0000-0000-000000000000"
+              },
+              "resourceGroup": {
+                "default": "your-acquisition-resource-group"
+              },
+              "workflowName": {
+                "default": "your-acquisition-workflow"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "api-version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "2016-06-01"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcquisitionTriggerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Azure Resource Manager accepted the workflow trigger run. The trigger-run operation may return an empty response body; acquisition completion is determined through GET /status."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Get evidence acquisition status",
+        "description": "Returns the latest state for the requested incident. The Logic App continues to analysis only after status is Completed; Failed is terminal and must not be reported as success.",
+        "servers": [
+          {
+            "url": "https://{acquisitionHost}/api",
+            "variables": {
+              "acquisitionHost": {
+                "default": "your-acquisition.azurewebsites.net"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "incidentId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "example": "INC-2026-0001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current acquisition state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcquisitionStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/ProcessEvidence": {
+      "post": {
+        "summary": "Start forensic evidence analysis",
+        "description": "Accepts acquisition metadata and queues analysis. The Person 3 managed identity writes parsed artifact documents to Cosmos DB using IncidentID as the partition key.",
+        "servers": [
+          {
+            "url": "https://{analysisHost}",
+            "variables": {
+              "analysisHost": {
+                "default": "your-analysis.azurewebsites.net"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessEvidenceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Analysis accepted for asynchronous processing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/GenerateReport": {
+      "post": {
+        "summary": "Generate an incident report",
+        "description": "Starts report generation from the incident and its persisted analysis/chain-of-custody records. Do not send SAS tokens or storage credentials in the request.",
+        "servers": [
+          {
+            "url": "https://{analysisHost}",
+            "variables": {
+              "analysisHost": {
+                "default": "your-analysis.azurewebsites.net"
+              }
+            }
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateReportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Report generation accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Use a Microsoft Entra access token acquired by the calling managed identity. For the ARM trigger, audience is https://management.azure.com/. For Function endpoints, audience is the API application URI configured by the owning team."
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request is invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "A valid bearer token is required."
+      },
+      "Forbidden": {
+        "description": "The caller is authenticated but is not authorized."
+      },
+      "NotFound": {
+        "description": "The incident or requested record does not exist."
+      }
+    },
+    "schemas": {
+      "IncidentMetadata": {
+        "type": "object",
+        "required": [
+          "IncidentID",
+          "TargetVM",
+          "IPAddress",
+          "SubscriptionID"
+        ],
+        "properties": {
+          "IncidentID": {
+            "type": "string",
+            "minLength": 1,
+            "examples": [
+              "INC-2026-0001"
+            ]
+          },
+          "TargetVM": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Full Azure Compute VM ARM resource ID."
+          },
+          "IPAddress": {
+            "type": "string",
+            "format": "ipvanyaddress"
+          },
+          "SubscriptionID": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AcquisitionTriggerRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IncidentMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+            "IncidentSeverity",
+            "EvidenceBlobUri"
+            ],
+            "properties": {
+              "IncidentSeverity": {
+                "type": "string",
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High",
+                  "Critical"
+                ]
+              },
+              "EvidenceBlobUri": {
+                "$ref": "#/components/schemas/EvidenceBlobUri"
+              }
+            }
+          }
+        ]
+      },
+      "AcquisitionStatus": {
+        "type": "object",
+        "required": [
+          "status",
+          "incidentId"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "Accepted",
+              "InProgress",
+              "Completed",
+              "Failed"
+            ]
+          },
+          "incidentId": {
+            "type": "string"
+          },
+          "evidenceBlobUri": {
+            "$ref": "#/components/schemas/EvidenceBlobUri"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ProcessEvidenceRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IncidentMetadata"
+          },
+          {
+            "type": "object",
+            "required": [
+              "IncidentSeverity",
+              "EvidenceBlobUri",
+              "ContainmentDetails",
+              "PipelineStatus",
+              "Timestamp"
+            ],
+            "properties": {
+              "IncidentSeverity": {
+                "type": "string",
+                "enum": [
+                  "Low",
+                  "Medium",
+                  "High",
+                  "Critical"
+                ]
+              },
+              "EvidenceBlobUri": {
+                "$ref": "#/components/schemas/EvidenceBlobUri"
+              },
+              "ContainmentDetails": {
+                "$ref": "#/components/schemas/ContainmentDetails"
+              },
+              "PipelineStatus": {
+                "type": "string",
+                "const": "AcquisitionCompleted"
+              },
+              "Timestamp": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
+      },
+      "AnalysisAccepted": {
+        "type": "object",
+        "required": [
+          "status",
+          "incidentId",
+          "analysisId",
+          "partitionKey"
+        ],
+        "properties": {
+          "status": {
+            "const": "Accepted"
+          },
+          "incidentId": {
+            "type": "string"
+          },
+          "analysisId": {
+            "type": "string"
+          },
+          "partitionKey": {
+            "type": "string",
+            "description": "Must equal incidentId / IncidentID."
+          }
+        }
+      },
+      "ContainmentDetails": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "Contained",
+              "Bypassed"
+            ]
+          },
+          "IsolationNSG": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "PreviousNSGId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri-reference"
+          },
+          "NetworkInterfaces": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "previousNSGId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "GenerateReportRequest": {
+        "type": "object",
+        "required": [
+          "IncidentID"
+        ],
+        "properties": {
+          "IncidentID": {
+            "type": "string",
+            "minLength": 1
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "pdf",
+              "html",
+              "json"
+            ],
+            "default": "pdf"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReportAccepted": {
+        "type": "object",
+        "required": [
+          "status",
+          "incidentId",
+          "reportId"
+        ],
+        "properties": {
+          "status": {
+            "const": "Accepted"
+          },
+          "incidentId": {
+            "type": "string"
+          },
+          "reportId": {
+            "type": "string"
+          }
+        }
+      },
+      "EvidenceBlobUri": {
+        "type": "string",
+        "format": "uri",
+        "pattern": "^https://[^/]+\\.blob\\.core\\.windows\\.net/evidence/[^/]+/[^/]+$",
+        "description": "Canonical evidence object URI (no SAS query string). Format: https://<account>.blob.core.windows.net/evidence/<IncidentID>/memdump.raw."
+      },
+      "ForensicArtifactRecord": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ProcessArtifact"
+          },
+          {
+            "$ref": "#/components/schemas/NetworkConnectionArtifact"
+          },
+          {
+            "$ref": "#/components/schemas/TimelineEventArtifact"
+          }
+        ],
+        "description": "Cosmos DB document. The container partition key is /IncidentID."
+      },
+      "ProcessArtifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "IncidentID",
+          "artifactType",
+          "processId",
+          "name",
+          "observedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "IncidentID": {
+            "type": "string"
+          },
+          "artifactType": {
+            "const": "process"
+          },
+          "processId": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "parentProcessId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commandLine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": true
+      },
+      "NetworkConnectionArtifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "IncidentID",
+          "artifactType",
+          "localAddress",
+          "remoteAddress",
+          "protocol",
+          "observedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "IncidentID": {
+            "type": "string"
+          },
+          "artifactType": {
+            "const": "networkConnection"
+          },
+          "localAddress": {
+            "type": "string",
+            "format": "ipvanyaddress"
+          },
+          "localPort": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "remoteAddress": {
+            "type": "string",
+            "format": "ipvanyaddress"
+          },
+          "remotePort": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": true
+      },
+      "TimelineEventArtifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "IncidentID",
+          "artifactType",
+          "timestamp",
+          "eventType",
+          "source"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "IncidentID": {
+            "type": "string"
+          },
+          "artifactType": {
+            "const": "timelineEvent"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

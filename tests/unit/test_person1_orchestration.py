@@ -237,7 +237,9 @@ class TestPerson1Orchestration(unittest.TestCase):
         self.assertIn("containmentFunctionUrl", params)
         self.assertIn("acquisitionArmRequestUrl", params)
         self.assertIn("acquisitionStatusUrl", params)
+        self.assertIn("acquisitionStatusAudience", params)
         self.assertIn("analysisPipelineUrl", params)
+        self.assertIn("analysisApiAudience", params)
         self.assertIn("evidenceBlobUriTemplate", params)
 
 

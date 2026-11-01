@@ -91,6 +91,10 @@ The ingress Webhook trigger and downstream calls enforce the standard JSON schem
    - `Start_Acquisition_Workflow` -> Calls Person 2 acquisition trigger with Blob URI template: `https://<storage>.blob.core.windows.net/evidence/{IncidentID}/{TargetVMName}.raw`
    - `Wait_For_Evidence_Acquisition` -> Polls status until `Completed`.
    - `Start_Analysis_Pipeline` -> Calls Person 3 Cosmos DB / Analysis engine with Partition Key `IncidentID`.
+2. The endpoint paths, request/response payloads, bearer-token requirements,
+   and Cosmos artifact schemas are defined in
+   [`integration-openapi.json`](./integration-openapi.json). The report
+   trigger is specified for callers but is not yet invoked by this workflow.
 
 ### Secure deployment order
 

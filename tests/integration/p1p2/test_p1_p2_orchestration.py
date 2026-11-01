@@ -62,7 +62,10 @@ class TestP1P2Integration(unittest.TestCase):
         )
         normal_branch = test_mode_branch["else"]["actions"]["Check_Containment_Success"]
         self.assertIn("Start_Acquisition_Workflow", normal_branch["actions"])
-        self.assertIn("Start_Analysis_Pipeline", normal_branch["actions"])
+        self.assertIn("Check_Acquisition_Completed", normal_branch["actions"])
+        acquisition_check = normal_branch["actions"]["Check_Acquisition_Completed"]
+        self.assertIn("Start_Analysis_Pipeline", acquisition_check["actions"])
+        self.assertIn("Record_Acquisition_Failure", acquisition_check["else"]["actions"])
 
     @patch("src.functions.NetworkContainment.clients.credential")
     @patch("src.functions.NetworkContainment.clients.network_client")

@@ -6,6 +6,11 @@
 
 **Audience**: @gitforg (Person 2), @jyeshthachouhan14 (Person 3)
 
+The machine-readable contract is
+[`integration-openapi.json`](./integration-openapi.json). It is authoritative
+for endpoint paths, request/response payloads, authentication, and the Cosmos
+DB artifact record schema. The examples below are illustrative.
+
 ---
 
 ## 1. Overview
@@ -64,16 +69,11 @@ Authorization: Bearer <ManagedIdentityToken>  # Audience: https://management.azu
 **Required Response**:
 ```http
 HTTP/1.1 202 Accepted
-Content-Type: application/json
-Location: {statusUrl}?incidentId=INC-2026-0001
-Retry-After: 30
-
-{
-  "status": "Accepted",
-  "incidentId": "INC-2026-0001",
-  "statusUrl": "https://your-acquisition-func.azurewebsites.net/api/status"
-}
 ```
+
+The Azure Resource Manager trigger-run operation may return an empty body.
+Use the separately configured status endpoint to determine acquisition
+completion.
 
 ### 2.3 Acquisition Status Contract
 
@@ -89,7 +89,7 @@ HTTP/1.1 200 OK
 Content-Type: application/json
 
 {
-  "status": "Completed",  // or "InProgress", "Failed"
+  "status": "Completed",  // or "Accepted", "InProgress", "Failed"
   "incidentId": "INC-2026-0001",
   "evidenceBlobUri": "https://forensicevidence.blob.core.windows.net/evidence/INC-2026-0001/suspicious-vm-01.raw",
   "completedAt": "2026-01-15T10:30:00Z",
@@ -97,7 +97,7 @@ Content-Type: application/json
 }
 ```
 
-> **Polling Logic**: Logic App polls every 30 seconds, max 60 attempts (30 min timeout). Return `"Completed"` to proceed.
+> **Polling Logic**: Logic App polls every 30 seconds, for up to 240 attempts or two hours. Return `"Completed"` to proceed; `"Failed"` is terminal and does not start analysis.
 ---
 
 ## 2.4 Registration Steps
@@ -119,11 +119,15 @@ Content-Type: application/json
    ```bicep
    param acquisitionArmRequestUrl string = '<YOUR_ARM_TRIGGER_URL>'
    param acquisitionStatusUrl string = '<YOUR_STATUS_URL>'
+   param acquisitionStatusAudience string = '<YOUR_STATUS_API_APP_ID_URI>'
    ```
 
 4. **Grant Logic App Access to Your Trigger**
    - Your ARM trigger URL requires **Logic App Contributor** or **Workflow Trigger Access** on your workflow
    - Person 1's Logic App Managed Identity (`aacfp-incident-response`) must have this role
+   - Grant the same identity the API permission required by the status endpoint;
+     configure `acquisitionStatusAudience` to the audience that endpoint
+     validates.
 
    ```bash
    # Run by Person 2 (you) after deploying your workflow
@@ -136,8 +140,8 @@ Content-Type: application/json
 
 5. **Test Integration**
    ```bash
-   # Person 1 triggers test from their Logic App
-   # You verify: trigger received → acquisition started → status returns "Completed"
+   # Person 1 triggers a synthetic test incident from their Logic App
+   # Verify the trigger is received and polling returns "Completed"
    ```
 
 ---
@@ -155,6 +159,7 @@ Content-Type: application/json
 **Request (Logic App → Person 3)**:
 ```http
 POST {analysisPipelineUrl}
+Authorization: Bearer <managed-identity-token>
 Content-Type: application/json
 
 {
@@ -206,7 +211,11 @@ Content-Type: application/json
 3. **Person 1 Updates Bicep Parameter**
    ```bicep
    param analysisPipelineUrl string = '<YOUR_ANALYSIS_URL>'
+   param analysisApiAudience string = '<YOUR_ANALYSIS_API_APP_ID_URI>'
    ```
+   Configure the Person 3 API to authorize the Logic App managed identity for
+   this audience. Do not rely on an anonymous Function URL or embed a Function
+   key in the workflow.
 
 4. **Configure Evidence Storage Access**
    - Your pipeline needs **Storage Blob Data Reader** on the evidence container
@@ -219,8 +228,49 @@ Content-Type: application/json
    ```
 
 5. **Test Integration**
-   - Person 1 runs test incident
-   - You verify: payload received → analysis started → results written to Cosmos DB with `IncidentID` partition key
+   - Person 1 runs a synthetic incident after reviewing the deployment
+     boundary.
+   - Verify `POST /api/ProcessEvidence` returns `202 Accepted` and the
+     analysis service writes records with the matching `IncidentID` partition
+     key.
+
+### 3.4 Report Generation Contract
+
+Person 3 exposes the report-generation operation separately from analysis:
+
+```http
+POST /api/GenerateReport
+Authorization: Bearer <managed-identity-token>
+Content-Type: application/json
+
+{
+  "IncidentID": "INC-2026-0001",
+  "format": "pdf"
+}
+```
+
+`IncidentID` is required; `format` is optional and may be `pdf`, `html`, or
+`json` (default `pdf`). Respond `202 Accepted` with `status: "Accepted"`,
+`incidentId`, and a stable `reportId`. This trigger is specified for callers
+that need a report; it is not yet invoked automatically by the Person 1 Logic
+App workflow.
+
+### 3.5 Cosmos DB Artifact Records
+
+Person 3 writes each parsed artifact as an individual Cosmos DB document with
+`IncidentID` as the container partition key (`/IncidentID`). The OpenAPI
+`ForensicArtifactRecord` schema defines the three supported document shapes:
+
+- `ProcessArtifact` — process ID, parent process ID, executable name/path,
+  command line, user, and observation time.
+- `NetworkConnectionArtifact` — local/remote IPs and ports, protocol,
+  connection state, optional process ID, and observation time.
+- `TimelineEventArtifact` — timestamp, event type, source, description, and
+  structured details.
+
+Each record requires a unique Cosmos `id`, `IncidentID`, and `artifactType`.
+Use an ISO 8601 UTC timestamp and do not store SAS tokens or credentials in
+artifact documents.
 ---
 
 ## 4. Shared Requirements (Both Persons)

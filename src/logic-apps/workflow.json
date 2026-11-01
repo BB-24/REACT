@@ -5,7 +5,9 @@
     "containmentFunctionUrl": { "type": "String" },
     "acquisitionArmRequestUrl": { "type": "String" },
     "acquisitionStatusUrl": { "type": "String" },
+    "acquisitionStatusAudience": { "type": "String" },
     "analysisPipelineUrl": { "type": "String" },
+    "analysisApiAudience": { "type": "String" },
     "evidenceBlobUriTemplate": { "type": "String" }
   },
   "triggers": {
@@ -122,6 +124,9 @@
                       "body": {
                         "IncidentID": "@body('Parse_Incident')?['IncidentID']",
                         "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                        "IPAddress": "@body('Parse_Incident')?['IPAddress']",
+                        "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
+                        "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
                         "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))"
                       }
                     },
@@ -132,15 +137,15 @@
                   },
                   "Wait_For_Evidence_Acquisition": {
                     "type": "Until",
-                    "expression": "@equals(body('Get_Acquisition_Status')?['status'], 'Completed')",
-                    "limit": { "count": 60, "timeout": "PT2H" },
+                    "expression": "@or(equals(body('Get_Acquisition_Status')?['status'], 'Completed'), equals(body('Get_Acquisition_Status')?['status'], 'Failed'))",
+                    "limit": { "count": 240, "timeout": "PT2H" },
                     "actions": {
                       "Get_Acquisition_Status": {
                         "type": "Http",
                         "inputs": {
                           "method": "GET",
                           "uri": "@concat(parameters('acquisitionStatusUrl'), '?incidentId=', encodeUriComponent(body('Parse_Incident')?['IncidentID']))",
-                          "authentication": { "type": "ManagedServiceIdentity", "audience": "https://management.azure.com/" }
+                          "authentication": { "type": "ManagedServiceIdentity", "audience": "@parameters('acquisitionStatusAudience')" }
                         },
                         "runtimeConfiguration": {
                           "secureData": { "properties": ["inputs"] }
@@ -155,26 +160,50 @@
                     },
                     "runAfter": { "Start_Acquisition_Workflow": ["Succeeded"] }
                   },
-                  "Start_Analysis_Pipeline": {
-                    "type": "Http",
-                    "inputs": {
-                      "method": "POST",
-                      "uri": "@parameters('analysisPipelineUrl')",
-                      "headers": { "Content-Type": "application/json" },
-                      "body": {
-                        "IncidentID": "@body('Parse_Incident')?['IncidentID']",
-                        "TargetVM": "@body('Parse_Incident')?['TargetVM']",
-                        "IPAddress": "@body('Parse_Incident')?['IPAddress']",
-                        "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
-                        "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
-                        "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))",
-                        "ContainmentDetails": "@body('Call_Network_Containment')",
-                        "PipelineStatus": "AcquisitionCompleted",
-                        "Timestamp": "@{utcNow()}"
+                  "Check_Acquisition_Completed": {
+                    "type": "If",
+                    "expression": {
+                      "equals": ["@body('Get_Acquisition_Status')?['status']", "Completed"]
+                    },
+                    "actions": {
+                      "Start_Analysis_Pipeline": {
+                        "type": "Http",
+                        "inputs": {
+                          "method": "POST",
+                          "uri": "@parameters('analysisPipelineUrl')",
+                          "headers": { "Content-Type": "application/json" },
+                          "authentication": { "type": "ManagedServiceIdentity", "audience": "@parameters('analysisApiAudience')" },
+                          "body": {
+                            "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                            "TargetVM": "@body('Parse_Incident')?['TargetVM']",
+                            "IPAddress": "@body('Parse_Incident')?['IPAddress']",
+                            "SubscriptionID": "@body('Parse_Incident')?['SubscriptionID']",
+                            "IncidentSeverity": "@body('Parse_Incident')?['IncidentSeverity']",
+                            "EvidenceBlobUri": "@format(parameters('evidenceBlobUriTemplate'), body('Parse_Incident')?['IncidentID'], last(split(body('Parse_Incident')?['TargetVM'], '/')))",
+                            "ContainmentDetails": "@body('Call_Network_Containment')",
+                            "PipelineStatus": "AcquisitionCompleted",
+                            "Timestamp": "@{utcNow()}"
+                          }
+                        },
+                        "runtimeConfiguration": {
+                          "secureData": { "properties": ["inputs"] }
+                        },
+                        "runAfter": {}
                       }
                     },
-                    "runtimeConfiguration": {
-                      "secureData": { "properties": ["inputs"] }
+                    "else": {
+                      "actions": {
+                        "Record_Acquisition_Failure": {
+                          "type": "Compose",
+                          "inputs": {
+                            "IncidentID": "@body('Parse_Incident')?['IncidentID']",
+                            "Error": "Evidence acquisition reported Failed.",
+                            "AcquisitionStatus": "@body('Get_Acquisition_Status')",
+                            "Timestamp": "@{utcNow()}"
+                          },
+                          "runAfter": {}
+                        }
+                      }
                     },
                     "runAfter": { "Wait_For_Evidence_Acquisition": ["Succeeded"] }
                   }

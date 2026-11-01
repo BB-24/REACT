@@ -11,13 +11,18 @@ param containmentFunctionUrl string
 @description('ARM trigger-run endpoint for the acquisition workflow owned by Person 2 (for example .../triggers/manual/run?api-version=2016-06-01).')
 param acquisitionArmRequestUrl string
 
-@description('Endpoint that returns evidence acquisition status. It must return { status: "Completed" } when ready.')
+@description('Endpoint that returns evidence acquisition status. It must return { status: "Completed" } when ready and { status: "Failed" } on terminal failure.')
 param acquisitionStatusUrl string
 
+@description('Microsoft Entra token audience accepted by the acquisition status API.')
+param acquisitionStatusAudience string
 
 @description('Endpoint for Person 3 analysis pipeline.')
 @secure()
 param analysisPipelineUrl string
+
+@description('Microsoft Entra token audience accepted by the analysis API.')
+param analysisApiAudience string
 
 @description('Blob URI format string. {0} is IncidentID and {1} is the target VM name.')
 param evidenceBlobUriTemplate string
@@ -46,7 +51,9 @@ resource incidentResponseWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
       containmentFunctionUrl: { value: containmentFunctionUrl }
       acquisitionArmRequestUrl: { value: acquisitionArmRequestUrl }
       acquisitionStatusUrl: { value: acquisitionStatusUrl }
+      acquisitionStatusAudience: { value: acquisitionStatusAudience }
       analysisPipelineUrl: { value: analysisPipelineUrl }
+      analysisApiAudience: { value: analysisApiAudience }
       evidenceBlobUriTemplate: { value: evidenceBlobUriTemplate }
     }
   }
