@@ -22,18 +22,16 @@ from . import clients, config
 DEFAULT_TABLE = "dbo.EvidenceLedger"
 
 # Column order is the INSERT order; ``record_evidence`` reads the entry dict
-# using exactly these keys.
+# using these acceptance-criteria keys.
 COLUMNS = (
+    "EvidenceId",
     "IncidentId",
+    "EvidenceType",
     "BlobUri",
-    "BlobName",
-    "ArtifactType",
-    "SizeBytes",
     "Sha256Hash",
-    "AcquiredUtc",
-    "RecordedUtc",
-    "InitiatorObjectId",
-    "SourceHost",
+    "FileSizeBytes",
+    "CollectionTimestamp",
+    "CollectorIdentity",
 )
 
 # A table name cannot be parameterised, so it is interpolated into the SQL text.
@@ -68,12 +66,12 @@ def build_lookup(table, columns):
     """Return the statement behind ``find_evidence``."""
     return (
         "SELECT TOP 1 {columns} FROM {table} "
-        "WHERE IncidentId = ? AND ArtifactType = ? "
-        "ORDER BY LedgerEntryId DESC".format(columns=", ".join(columns), table=table)
+        "WHERE IncidentId = ? AND EvidenceType = ? "
+        "ORDER BY EvidenceId DESC".format(columns=", ".join(columns), table=table)
     )
 
 
-LOOKUP_COLUMNS = ("BlobName", "Sha256Hash", "SizeBytes", "RecordedUtc")
+LOOKUP_COLUMNS = ("EvidenceType", "Sha256Hash", "FileSizeBytes", "CollectionTimestamp")
 
 
 def find_evidence(incident_id, artifact_type, connection_factory=None):
@@ -95,7 +93,17 @@ def find_evidence(incident_id, artifact_type, connection_factory=None):
 
     if not row:
         return None
-    return dict(zip(LOOKUP_COLUMNS, row, strict=False))
+    result = dict(zip(LOOKUP_COLUMNS, row, strict=False))
+    # Keep the existing snapshot/reporting consumers source-compatible while
+    # the persisted schema uses the acceptance-criteria names.
+    result.update(
+        {
+            "ArtifactType": result["EvidenceType"],
+            "SizeBytes": result["FileSizeBytes"],
+            "AcquiredUtc": result["CollectionTimestamp"],
+        }
+    )
+    return result
 
 
 def _connect():
@@ -109,13 +117,19 @@ def record_evidence(entry, connection_factory=None):
     A return value of ``0`` means the record was already present -- a replayed
     Event Grid delivery -- which is a success, not an error.
     """
-    missing = [column for column in COLUMNS if column not in entry]
+    normalized = dict(entry)
+    normalized.setdefault("EvidenceId", normalized.get("BlobUri"))
+    normalized.setdefault("EvidenceType", normalized.get("ArtifactType"))
+    normalized.setdefault("FileSizeBytes", normalized.get("SizeBytes"))
+    normalized.setdefault("CollectionTimestamp", normalized.get("AcquiredUtc"))
+    normalized.setdefault("CollectorIdentity", normalized.get("InitiatorObjectId"))
+    missing = [column for column in COLUMNS if column not in normalized]
     if missing:
         raise ValueError(f"Custody entry is missing required fields: {', '.join(missing)}")
 
     statement = build_insert(table_name())
-    values = [entry[column] for column in COLUMNS]
-    values.extend([entry["BlobUri"], entry["Sha256Hash"]])
+    values = [normalized[column] for column in COLUMNS]
+    values.extend([normalized["BlobUri"], normalized["Sha256Hash"]])
 
     factory = connection_factory or _connect
     connection = factory()
@@ -130,6 +144,6 @@ def record_evidence(entry, connection_factory=None):
     if written == 0:
         logging.info(
             "Custody record for %s already present; duplicate Event Grid delivery ignored.",
-            entry["BlobName"],
+            normalized.get("BlobName", normalized["BlobUri"]),
         )
     return written

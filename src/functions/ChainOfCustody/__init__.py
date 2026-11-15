@@ -81,17 +81,24 @@ def _artifact_type(blob_name):
 def process_blob_created(event, blob_client_factory=None, connection_factory=None):
     """Hash one created blob and append its custody record. Returns a summary."""
     data = event.get("data") or {}
-    blob_url = data.get("url")
-    if not blob_url:
+    # ``url`` is the current Storage event schema. ``blobUrl`` is emitted by
+    # older Event Grid schema versions and is retained for compatibility.
+    blob_url = data.get("url") or data.get("blobUrl")
+    if not isinstance(blob_url, str) or not blob_url.strip():
         raise ValueError("BlobCreated event carried no blob URL.")
 
     container, blob_name = split_blob_url(blob_url)
-    expected_container = config.get("EVIDENCE_CONTAINER", "evidence")
-    if container != expected_container:
+    expected_containers = set(
+        config.get_list(
+            "EVIDENCE_EVENT_CONTAINERS",
+            [config.get("EVIDENCE_CONTAINER", "evidence"), "memory-dumps", "disk-snapshots"],
+        )
+    )
+    if container not in expected_containers:
         logging.info(
-            "Ignoring blob in container '%s'; the enclave container is '%s'.",
+            "Ignoring blob in container '%s'; enclave containers are %s.",
             container,
-            expected_container,
+            ", ".join(sorted(expected_containers)),
         )
         return {"blobName": blob_name, "status": "skipped", "reason": "outside-enclave-container"}
 
@@ -127,16 +134,14 @@ def process_blob_created(event, blob_client_factory=None, connection_factory=Non
     )
 
     entry = {
+        "EvidenceId": blob_url,
         "IncidentId": incident_id,
+        "EvidenceType": _artifact_type(blob_name),
         "BlobUri": blob_url,
-        "BlobName": blob_name,
-        "ArtifactType": _artifact_type(blob_name),
-        "SizeBytes": hashed_bytes,
         "Sha256Hash": digest,
-        "AcquiredUtc": acquired_utc,
-        "RecordedUtc": datetime.now(timezone.utc).isoformat(),
-        "InitiatorObjectId": initiator,
-        "SourceHost": metadata.get("sourcehost", "unknown"),
+        "FileSizeBytes": hashed_bytes,
+        "CollectionTimestamp": acquired_utc,
+        "CollectorIdentity": initiator,
     }
 
     written = ledger.record_evidence(entry, connection_factory=connection_factory)
@@ -183,6 +188,9 @@ def handle_custody(req, blob_client_factory=None, connection_factory=None):
         body = req.get_json()
     except ValueError:
         return _json_response(400, {"error": "Request body is not valid JSON."})
+
+    if not isinstance(body, (dict, list)):
+        return _json_response(400, {"error": "Event Grid payload must be an object or array."})
 
     events = body if isinstance(body, list) else [body]
 

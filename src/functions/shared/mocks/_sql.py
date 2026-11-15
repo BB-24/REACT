@@ -28,7 +28,7 @@ _INSERT = re.compile(
 _LOOKUP = re.compile(
     r"^\s*SELECT\s+(?:TOP\s+\d+\s+)?(?P<columns>.+?)\s+FROM\s+"
     r"(?P<table>[A-Za-z0-9_.]+)\s+WHERE\s+IncidentId\s*=\s*\?\s+AND\s+"
-    r"ArtifactType\s*=\s*\?",
+    r"EvidenceType\s*=\s*\?",
     re.IGNORECASE | re.DOTALL,
 )
 _FORBIDDEN = re.compile(r"^\s*(UPDATE|DELETE|DROP|TRUNCATE|ALTER)\b", re.IGNORECASE)
@@ -92,7 +92,7 @@ class MockCursor:
         matched = [
             row
             for row in self._world.ledger_rows
-            if row.get("IncidentId") == incident_id and row.get("ArtifactType") == artifact_type
+            if row.get("IncidentId") == incident_id and row.get("EvidenceType") == artifact_type
         ]
         matched.sort(key=lambda row: row["LedgerEntryId"], reverse=True)
         self._results = [tuple(row.get(column) for column in columns) for row in matched]

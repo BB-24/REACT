@@ -291,6 +291,9 @@ class World:
             previous = self.ledger_rows[-1]["_LedgerDigest"] if self.ledger_rows else "0" * 64
             payload = json.dumps(row, sort_keys=True, default=str)
             stored = dict(row)
+            stored.setdefault("ArtifactType", stored.get("EvidenceType"))
+            stored.setdefault("SizeBytes", stored.get("FileSizeBytes"))
+            stored.setdefault("AcquiredUtc", stored.get("CollectionTimestamp"))
             stored["LedgerEntryId"] = len(self.ledger_rows) + 1
             stored["_PreviousDigest"] = previous
             stored["_LedgerDigest"] = hashlib.sha256(
@@ -306,7 +309,15 @@ class World:
             payload = {
                 key: value
                 for key, value in row.items()
-                if key not in ("LedgerEntryId", "_PreviousDigest", "_LedgerDigest")
+                if key
+                not in (
+                    "LedgerEntryId",
+                    "_PreviousDigest",
+                    "_LedgerDigest",
+                    "ArtifactType",
+                    "SizeBytes",
+                    "AcquiredUtc",
+                )
             }
             expected = hashlib.sha256(
                 (previous + json.dumps(payload, sort_keys=True, default=str)).encode("utf-8")

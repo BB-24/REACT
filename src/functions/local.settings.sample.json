@@ -9,6 +9,7 @@
 
     "EVIDENCE_STORAGE_ACCOUNT": "reactenclave01",
     "EVIDENCE_CONTAINER": "evidence",
+    "EVIDENCE_EVENT_CONTAINERS": "evidence,memory-dumps,disk-snapshots",
     "TOOLS_CONTAINER": "tools",
     "STORAGE_ENDPOINT_SUFFIX": "core.windows.net",
 

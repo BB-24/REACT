@@ -631,6 +631,70 @@ resource custodySubscription 'Microsoft.EventGrid/systemTopics/eventSubscription
   }
 }
 
+resource memoryCustodySubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = {
+  parent: systemTopic
+  name: 'chain-of-custody-memory-dumps'
+  properties: {
+    destination: {
+      endpointType: 'WebHook'
+      properties: {
+        endpointUrl: 'https://${functionApp.properties.defaultHostName}/api/custody?code=${listKeys('${functionApp.id}/host/default', '2022-09-01').functionKeys.default}'
+        maxEventsPerBatch: 1
+        preferredBatchSizeInKilobytes: 64
+      }
+    }
+    filter: {
+      includedEventTypes: [
+        'Microsoft.Storage.BlobCreated'
+      ]
+      subjectBeginsWith: '/blobServices/default/containers/${memoryDumpsContainer.name}/'
+    }
+    retryPolicy: {
+      maxDeliveryAttempts: 30
+      eventTimeToLiveInMinutes: 1440
+    }
+    deadLetterDestination: {
+      endpointType: 'StorageBlob'
+      properties: {
+        resourceId: evidenceStorage.id
+        blobContainerName: deadLetterContainer.name
+      }
+    }
+  }
+}
+
+resource diskCustodySubscription 'Microsoft.EventGrid/systemTopics/eventSubscriptions@2023-12-15-preview' = {
+  parent: systemTopic
+  name: 'chain-of-custody-disk-snapshots'
+  properties: {
+    destination: {
+      endpointType: 'WebHook'
+      properties: {
+        endpointUrl: 'https://${functionApp.properties.defaultHostName}/api/custody?code=${listKeys('${functionApp.id}/host/default', '2022-09-01').functionKeys.default}'
+        maxEventsPerBatch: 1
+        preferredBatchSizeInKilobytes: 64
+      }
+    }
+    filter: {
+      includedEventTypes: [
+        'Microsoft.Storage.BlobCreated'
+      ]
+      subjectBeginsWith: '/blobServices/default/containers/${diskSnapshotsContainer.name}/'
+    }
+    retryPolicy: {
+      maxDeliveryAttempts: 30
+      eventTimeToLiveInMinutes: 1440
+    }
+    deadLetterDestination: {
+      endpointType: 'StorageBlob'
+      properties: {
+        resourceId: evidenceStorage.id
+        blobContainerName: deadLetterContainer.name
+      }
+    }
+  }
+}
+
 resource deadLetterContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobServices
   name: 'custody-deadletter'
@@ -789,6 +853,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'REACT_MOCK_MODE', value: string(enableMockMode) }
         { name: 'EVIDENCE_STORAGE_ACCOUNT', value: evidenceStorage.name }
         { name: 'EVIDENCE_CONTAINER', value: evidenceContainerName }
+        { name: 'EVIDENCE_EVENT_CONTAINERS', value: '${evidenceContainerName},${memoryDumpsContainer.name},${diskSnapshotsContainer.name}' }
         { name: 'TOOLS_CONTAINER', value: toolsContainerName }
         { name: 'STORAGE_ENDPOINT_SUFFIX', value: environment().suffixes.storage }
 
