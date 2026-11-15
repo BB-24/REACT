@@ -1,8 +1,9 @@
-﻿"""Unit tests for the Phase 3 hashing and ledger logic.
+"""Unit tests for the Phase 3 hashing and ledger logic.
 
 The blob client and SQL connection are both replaced with doubles, so these run
 with no Azure dependency and no network.
 """
+
 import hashlib
 import json
 
@@ -58,9 +59,7 @@ class _FakeProperties:
 
 class _FakeBlobClient:
     def __init__(self, payload, metadata=None, declared_size=None, chunk=4):
-        self._chunks = [
-            payload[i:i + chunk] for i in range(0, len(payload), chunk)
-        ] or [b""]
+        self._chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
         self._size = declared_size if declared_size is not None else len(payload)
         self._metadata = metadata or {}
 
@@ -188,9 +187,7 @@ def test_size_mismatch_refuses_to_record(monkeypatch):
     with pytest.raises(RuntimeError):
         process_blob_created(
             _blob_created(),
-            blob_client_factory=lambda url: _FakeBlobClient(
-                b"abc", declared_size=999
-            ),
+            blob_client_factory=lambda url: _FakeBlobClient(b"abc", declared_size=999),
             connection_factory=lambda: connection,
         )
     assert connection.cursor_obj.statements == []
@@ -231,19 +228,25 @@ def _request(body):
 
 
 def test_answers_the_event_grid_validation_handshake():
-    events = [{
-        "eventType": VALIDATION_EVENT,
-        "data": {"validationCode": "ABC-123"},
-    }]
+    events = [
+        {
+            "eventType": VALIDATION_EVENT,
+            "data": {"validationCode": "ABC-123"},
+        }
+    ]
     response = handle_custody(_request(events))
     assert response.status_code == 200
     assert json.loads(response.get_body())["validationResponse"] == "ABC-123"
 
 
 def test_validation_handshake_short_circuits_a_mixed_batch():
-    events = [_blob_created(), {
-        "eventType": VALIDATION_EVENT, "data": {"validationCode": "X"},
-    }]
+    events = [
+        _blob_created(),
+        {
+            "eventType": VALIDATION_EVENT,
+            "data": {"validationCode": "X"},
+        },
+    ]
     response = handle_custody(
         _request(events),
         blob_client_factory=lambda url: pytest.fail("must not hash during handshake"),
@@ -260,8 +263,10 @@ def test_unrelated_event_types_are_ignored(monkeypatch):
 
 def test_malformed_json_returns_400():
     request = func.HttpRequest(
-        method="POST", url="/api/custody",
-        headers={"Content-Type": "application/json"}, body=b"{{{",
+        method="POST",
+        url="/api/custody",
+        headers={"Content-Type": "application/json"},
+        body=b"{{{",
     )
     assert handle_custody(request).status_code == 400
 
@@ -287,5 +292,6 @@ def test_table_name_from_config_is_validated(monkeypatch):
 
 def test_incomplete_entry_is_rejected():
     with pytest.raises(ValueError):
-        ledger.record_evidence({"IncidentId": "INC-1"},
-                               connection_factory=lambda: _FakeConnection())
+        ledger.record_evidence(
+            {"IncidentId": "INC-1"}, connection_factory=lambda: _FakeConnection()
+        )
