@@ -5,6 +5,7 @@ Registers all pipeline blueprints:
 - MemoryAcquisition (SOP 2 Phase 2)
 - DiskSnapshot (SOP 2 Phase 2b)
 - ChainOfCustody (SOP 2 Phase 3)
+- ReportGenerator (Issue #34 P3-4)
 """
 
 import json
@@ -15,6 +16,7 @@ from ChainOfCustody import bp as chain_of_custody_bp
 from DiskSnapshot import bp as disk_snapshot_bp
 from MemoryAcquisition import bp as memory_acquisition_bp
 from NetworkContainment import bp as network_containment_bp
+from ReportGenerator import bp as report_generator_bp
 from shared import clients
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
@@ -23,6 +25,7 @@ app.register_blueprint(network_containment_bp)
 app.register_blueprint(memory_acquisition_bp)
 app.register_blueprint(disk_snapshot_bp)
 app.register_blueprint(chain_of_custody_bp)
+app.register_blueprint(report_generator_bp)
 
 
 @app.route(route="health", methods=["GET"])

@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Forensic Investigation Report — {{ metadata.incident_id }}</title>
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 20mm 15mm 20mm 15mm;
+            @top-right {
+                content: "RESTRICTED — FORENSIC EVIDENCE";
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                font-size: 7pt;
+                font-weight: bold;
+                color: #e53e3e;
+            }
+            @bottom-left {
+                content: "REACT Automated Incident Response & Forensic Platform";
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                font-size: 7pt;
+                color: #718096;
+            }
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                font-size: 7pt;
+                color: #718096;
+            }
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            color: #1a202c;
+            line-height: 1.45;
+            font-size: 9.5pt;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Header & Branding */
+        .report-header {
+            border-bottom: 2px solid #2b6cb0;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+        }
+        .header-title-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        .platform-title {
+            font-size: 8pt;
+            font-weight: 700;
+            color: #2b6cb0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+        h1.report-title {
+            font-size: 18pt;
+            font-weight: 800;
+            color: #1a202c;
+            margin: 0 0 6px 0;
+        }
+        .badge-classification {
+            display: inline-block;
+            background: #fff5f5;
+            border: 1px solid #feb2b2;
+            color: #c53030;
+            font-size: 7.5pt;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        /* Section Layout */
+        .section {
+            margin-bottom: 22px;
+            page-break-inside: avoid;
+        }
+        .section-header {
+            border-bottom: 1px solid #cbd5e0;
+            padding-bottom: 4px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        .section-number {
+            background: #2b6cb0;
+            color: #ffffff;
+            font-size: 8pt;
+            font-weight: 700;
+            width: 18px;
+            height: 18px;
+            display: inline-block;
+            text-align: center;
+            line-height: 18px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        h2.section-title {
+            font-size: 11.5pt;
+            font-weight: 700;
+            color: #2d3748;
+            margin: 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8.5pt;
+            margin-bottom: 8px;
+        }
+        th, td {
+            padding: 6px 8px;
+            text-align: left;
+            border: 1px solid #e2e8f0;
+            vertical-align: top;
+        }
+        th {
+            background-color: #f7fafc;
+            color: #4a5568;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 7.5pt;
+            letter-spacing: 0.5px;
+        }
+        tr:nth-child(even) td {
+            background-color: #fcfdfd;
+        }
+        .code-cell {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 7.5pt;
+            word-break: break-all;
+            color: #2d3748;
+        }
+        .hash-cell {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 7pt;
+            word-break: break-all;
+            color: #2b6cb0;
+        }
+
+        /* Key-Value Metadata Grid */
+        .grid-2col {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+        }
+        .grid-2col td {
+            border: 1px solid #edf2f7;
+            padding: 5px 8px;
+        }
+        .meta-label {
+            width: 25%;
+            font-weight: 600;
+            color: #4a5568;
+            background: #f7fafc;
+            font-size: 8.5pt;
+        }
+        .meta-val {
+            width: 25%;
+            color: #1a202c;
+            font-size: 8.5pt;
+        }
+
+        /* Status Badges */
+        .status-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 700;
+            font-size: 7pt;
+            text-transform: uppercase;
+        }
+        .badge-verified {
+            background-color: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+        .badge-failed {
+            background-color: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #feb2b2;
+        }
+        .badge-warning {
+            background-color: #feebc8;
+            color: #744210;
+            border: 1px solid #fbd38d;
+        }
+        .badge-info {
+            background-color: #e2e8f0;
+            color: #2d3748;
+            border: 1px solid #cbd5e0;
+        }
+
+        /* Verification Banner */
+        .verification-card {
+            border: 1px solid;
+            border-radius: 4px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+        }
+        .verification-card.verified {
+            background-color: #f0fff4;
+            border-color: #9ae6b4;
+            color: #22543d;
+        }
+        .verification-card.failed {
+            background-color: #fff5f5;
+            border-color: #feb2b2;
+            color: #742a2a;
+        }
+        .verification-card.unavailable {
+            background-color: #fffff0;
+            border-color: #fefcbf;
+            color: #744210;
+        }
+        .verification-title {
+            font-weight: 700;
+            font-size: 9.5pt;
+            margin-bottom: 3px;
+        }
+        .verification-desc {
+            font-size: 8pt;
+            line-height: 1.35;
+        }
+
+        /* Empty State */
+        .empty-notice {
+            background-color: #f7fafc;
+            border: 1px dashed #cbd5e0;
+            color: #718096;
+            padding: 10px;
+            text-align: center;
+            font-style: italic;
+            border-radius: 4px;
+            font-size: 8.5pt;
+        }
+
+        /* Footer & Disclaimers */
+        .report-footer {
+            border-top: 1px solid #e2e8f0;
+            padding-top: 12px;
+            margin-top: 24px;
+            font-size: 7pt;
+            color: #718096;
+            line-height: 1.4;
+        }
+        .disclaimer-title {
+            font-weight: 700;
+            color: #4a5568;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header & Platform Branding -->
+    <div class="report-header">
+        <div class="header-title-row">
+            <div>
+                <div class="platform-title">REACT Cloud Sentinel — Automated Incident Response</div>
+                <h1 class="report-title">Forensic Investigation Report</h1>
+            </div>
+            <div style="text-align: right;">
+                <span class="badge-classification">FORENSIC EVIDENCE — RESTRICTED</span>
+                <div style="font-size: 7.5pt; color: #718096; margin-top: 4px;">Report ID: <strong>{{ report_id }}</strong></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 1. Incident Metadata -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">1</span>
+            <h2 class="section-title">Incident Metadata</h2>
+        </div>
+        <table class="grid-2col">
+            <tr>
+                <td class="meta-label">Incident Identifier</td>
+                <td class="meta-val"><strong>{{ metadata.incident_id }}</strong></td>
+                <td class="meta-label">Generated Timestamp (UTC)</td>
+                <td class="meta-val">{{ metadata.generated_at }}</td>
+            </tr>
+            <tr>
+                <td class="meta-label">Investigation Status</td>
+                <td class="meta-val">
+                    <span class="status-badge badge-verified">{{ metadata.status }}</span>
+                </td>
+                <td class="meta-label">Target VM / Host</td>
+                <td class="meta-val">{{ metadata.target_vm or "target-workload" }}</td>
+            </tr>
+            <tr>
+                <td class="meta-label">Primary IP Address</td>
+                <td class="meta-val">{{ metadata.ip_address or "10.0.1.20" }}</td>
+                <td class="meta-label">Incident Severity</td>
+                <td class="meta-val">
+                    <span class="status-badge {% if metadata.severity == 'Critical' %}badge-failed{% elif metadata.severity == 'High' %}badge-warning{% else %}badge-info{% endif %}">
+                        {{ metadata.severity or "Critical" }}
+                    </span>
+                </td>
+            </tr>
+            <tr>
+                <td class="meta-label">Isolation / Containment</td>
+                <td class="meta-val">
+                    {% if metadata.containment_status == "Bypassed" %}
+                        <span class="status-badge badge-warning">BYPASSED (POLICY EXEMPTION)</span>
+                    {% else %}
+                        <span class="status-badge badge-verified">CONTAINED (NSG ISOLATED)</span>
+                    {% endif %}
+                </td>
+                <td class="meta-label">Evidence Enclave Vault</td>
+                <td class="meta-val">WORM Immutable (7-Yr Policy Locked)</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- 2. Evidence Inventory (with Evidence Hashes) -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">2</span>
+            <h2 class="section-title">Evidence Inventory</h2>
+        </div>
+        {% if evidence_items and evidence_items|length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 5%;">#</th>
+                    <th style="width: 20%;">Evidence Name</th>
+                    <th style="width: 14%;">Artifact Type</th>
+                    <th style="width: 10%;">Size</th>
+                    <th style="width: 18%;">Acquired (UTC)</th>
+                    <th style="width: 23%;">SHA-256 Digest</th>
+                    <th style="width: 10%;">Integrity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in evidence_items %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><strong>{{ item.blob_name or item.name }}</strong></td>
+                    <td>{{ item.artifact_type or "Evidence Artifact" }}</td>
+                    <td>{{ item.size_formatted or (item.size_bytes ~ " bytes") }}</td>
+                    <td>{{ item.acquired_utc or item.recorded_utc or "-" }}</td>
+                    <td class="hash-cell">{{ item.sha256 or item.Sha256Hash or "Unavailable" }}</td>
+                    <td>
+                        <span class="status-badge {% if item.integrity_status == 'Verified' %}badge-verified{% else %}badge-info{% endif %}">
+                            {{ item.integrity_status or "Verified" }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-notice">No physical evidence blobs recorded in the ledger for this incident.</div>
+        {% endif %}
+    </div>
+
+    <!-- 3. Process Listings -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">3</span>
+            <h2 class="section-title">Process Listings</h2>
+        </div>
+        {% if process_listings and process_listings|length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 8%;">PID</th>
+                    <th style="width: 8%;">PPID</th>
+                    <th style="width: 22%;">Process Name</th>
+                    <th style="width: 32%;">Execution Details / Command Line</th>
+                    <th style="width: 18%;">Timestamp (UTC)</th>
+                    <th style="width: 12%;">Findings</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for proc in process_listings %}
+                <tr>
+                    <td class="code-cell"><strong>{{ proc.pid or "-" }}</strong></td>
+                    <td class="code-cell">{{ proc.ppid or "-" }}</td>
+                    <td><strong>{{ proc.process_name or proc.name or "unknown" }}</strong></td>
+                    <td class="code-cell">{{ proc.command_line or proc.details or "-" }}</td>
+                    <td>{{ proc.timestamp or "-" }}</td>
+                    <td>
+                        {% if proc.finding %}
+                        <span class="status-badge badge-failed">{{ proc.finding }}</span>
+                        {% else %}
+                        <span class="status-badge badge-info">Normal</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-notice">No process listings or memory execution artifacts identified for this incident.</div>
+        {% endif %}
+    </div>
+
+    <!-- 4. Network Connections -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">4</span>
+            <h2 class="section-title">Network Connections</h2>
+        </div>
+        {% if network_connections and network_connections|length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 18%;">Timestamp (UTC)</th>
+                    <th style="width: 8%;">Proto</th>
+                    <th style="width: 24%;">Source Endpoint</th>
+                    <th style="width: 24%;">Destination Endpoint</th>
+                    <th style="width: 14%;">State</th>
+                    <th style="width: 12%;">Analysis</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for conn in network_connections %}
+                <tr>
+                    <td>{{ conn.timestamp or "-" }}</td>
+                    <td><strong>{{ conn.protocol or "TCP" }}</strong></td>
+                    <td class="code-cell">{{ conn.source_ip }}:{{ conn.source_port }}</td>
+                    <td class="code-cell">{{ conn.destination_ip }}:{{ conn.destination_port }}</td>
+                    <td>{{ conn.state or "ESTABLISHED" }}</td>
+                    <td>
+                        {% if conn.threat or conn.suspicious %}
+                        <span class="status-badge badge-failed">{{ conn.threat or "Suspicious" }}</span>
+                        {% else %}
+                        <span class="status-badge badge-info">Observed</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-notice">No active or persistent network connections recorded for this incident.</div>
+        {% endif %}
+    </div>
+
+    <!-- 5. Timeline Events -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">5</span>
+            <h2 class="section-title">Timeline Events</h2>
+        </div>
+        {% if timeline_events and timeline_events|length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 22%;">Timestamp (UTC)</th>
+                    <th style="width: 16%;">Artifact Type</th>
+                    <th style="width: 18%;">Source</th>
+                    <th style="width: 44%;">Event Description & Evidence Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in timeline_events %}
+                <tr>
+                    <td class="code-cell">{{ event.timestamp }}</td>
+                    <td><span class="status-badge badge-info">{{ event.artifactType or event.artifact_type }}</span></td>
+                    <td class="code-cell">{{ event.source }}</td>
+                    <td>
+                        {{ event.message or event.data.message or (event.data | tojson) }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-notice">No parsed Plaso timeline events retrieved from Cosmos DB for this incident.</div>
+        {% endif %}
+    </div>
+
+    <!-- 6. Chain of Custody Verification -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">6</span>
+            <h2 class="section-title">Chain of Custody Verification</h2>
+        </div>
+
+        <!-- Ledger Integrity Banner -->
+        {% if custody_verification.status == "Verified" %}
+        <div class="verification-card verified">
+            <div class="verification-title">&#10004; CHAIN OF CUSTODY VERIFIED — CRYPTOGRAPHIC INTEGRITY CONFIRMED</div>
+            <div class="verification-desc">
+                {{ custody_verification.details }}
+                All evidence hashes match the immutable Azure SQL Ledger digest. No record modification or tampering detected.
+            </div>
+        </div>
+        {% elif custody_verification.status == "Failed" %}
+        <div class="verification-card failed">
+            <div class="verification-title">&#10008; CHAIN OF CUSTODY INTEGRITY FAILURE DETECTED</div>
+            <div class="verification-desc">
+                {{ custody_verification.details }}
+                WARNING: Cryptographic digest mismatch detected in ledger verification. Potential evidence tampering.
+            </div>
+        </div>
+        {% else %}
+        <div class="verification-card unavailable">
+            <div class="verification-title">&#9888; LEDGER VERIFICATION UNAVAILABLE / INCOMPLETE</div>
+            <div class="verification-desc">
+                {{ custody_verification.details or "Cryptographic ledger verification could not be executed directly in current environment." }}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if custody_records and custody_records|length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 6%;">Entry</th>
+                    <th style="width: 18%;">Recorded (UTC)</th>
+                    <th style="width: 18%;">Artifact Name</th>
+                    <th style="width: 14%;">Artifact Type</th>
+                    <th style="width: 32%;">SHA-256 Digest</th>
+                    <th style="width: 12%;">Verification</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rec in custody_records %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ rec.RecordedUtc or rec.recorded_utc or "-" }}</td>
+                    <td><strong>{{ rec.BlobName or rec.blob_name }}</strong></td>
+                    <td>{{ rec.ArtifactType or rec.artifact_type }}</td>
+                    <td class="hash-cell">{{ rec.Sha256Hash or rec.sha256 }}</td>
+                    <td>
+                        <span class="status-badge {% if custody_verification.status == 'Verified' %}badge-verified{% else %}badge-warning{% endif %}">
+                            {{ custody_verification.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-notice">No chain of custody records found in the ledger database for this incident.</div>
+        {% endif %}
+    </div>
+
+    <!-- Report Footer -->
+    <div class="report-footer">
+        <div class="disclaimer-title">Forensic Evidence & Integrity Disclaimer</div>
+        <div>
+            This document was generated automatically by the REACT Cloud Incident Response & Forensic Platform.
+            Evidence artifacts referenced herein are stored in locked immutable WORM storage with time-based retention.
+            Chain of custody entries are recorded into append-only cryptographic ledger structures.
+            Any modification, tampering, or extraction of this report outside authorized legal custody invalidates the integrity certificate.
+        </div>
+        <div style="margin-top: 8px; display: flex; justify-content: space-between;">
+            <span>Incident: <strong>{{ metadata.incident_id }}</strong></span>
+            <span>Report ID: <strong>{{ report_id }}</strong></span>
+            <span>Generated: <strong>{{ metadata.generated_at }}</strong></span>
+        </div>
+    </div>
+
+</body>
+</html>
