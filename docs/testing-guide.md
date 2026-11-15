@@ -255,6 +255,178 @@ docker run --rm \
 
 ---
 
+---
+
+### 3.9 ReportGenerator Azure Function (Issue #34 — P3-4)
+
+Issue #34 implements the automated forensic PDF reporting pipeline for Person 3. It aggregates investigation data from Cosmos DB Serverless and Azure SQL Ledger, renders a structured report using Jinja2, converts the HTML to PDF using WeasyPrint (with standard PDF fallback), and stores the resulting PDF in the locked WORM `reports` container.
+
+#### 3.9.1 ReportGenerator Architecture
+
+```text
+[ Logic App / SOC Analyst ]
+            |
+            v  POST /api/GenerateReport {"IncidentID": "INC-2026-001"}
++-------------------------------------------------------------------------+
+|                  ReportGenerator Azure Function                         |
+|  - Validates IncidentID request parameter                               |
+|  - Aggregates investigation data:                                       |
+|      * Cosmos DB: timeline events, process findings, network connections|
+|      * SQL Ledger: evidence records, cryptographic integrity digest     |
+|  - Jinja2 Template: formats 6 required forensic investigation sections  |
+|  - WeasyPrint / PDF Generator: compiles valid standard PDF              |
+|  - Azure Blob Storage: uploads PDF into 'reports' WORM container        |
++-------------------------------------------------------------------------+
+            |                                         |
+            v                                         v
+   [ Cosmos DB Core SQL ]                    [ Azure SQL Ledger ]
+ (timeline-artifacts container)               (dbo.EvidenceLedger)
+            |                                         |
+            +--------------------+--------------------+
+                                 |
+                                 v
+                     [ reports Container ]
+             (Immutable WORM storage, 7-year retention)
+```
+
+#### 3.9.2 Azure HTTP Function Endpoints & Payload Contracts
+
+The ReportGenerator blueprint registers the following endpoints:
+
+| Route | Method | Description |
+|---|---|---|
+| `/api/GenerateReport` | `POST` | Canonical OpenAPI 1.0.0 endpoint |
+| `/api/ReportGenerator` | `POST` | Blueprint name alias |
+| `/api/report/generate` | `POST` | RESTful path alias |
+
+**Request Body (`application/json`):**
+```json
+{
+  "IncidentID": "INC-2026-001",
+  "format": "pdf"
+}
+```
+*Note: Both `IncidentID` and `incidentId` are supported. Optional `format` parameter accepts `"pdf"` (default) or `"html"`.*
+
+**Success Response (`202 Accepted`):**
+```json
+{
+  "status": "Accepted",
+  "incidentId": "INC-2026-001",
+  "reportId": "RPT-INC-2026-001-20261024010000-a1b2c3",
+  "format": "pdf",
+  "container": "reports",
+  "blobName": "INC-2026-001/RPT-INC-2026-001-20261024010000-a1b2c3.pdf",
+  "blobUri": "https://reactevidence.blob.core.windows.net/reports/INC-2026-001/RPT-INC-2026-001-20261024010000-a1b2c3.pdf",
+  "sizeBytes": 42180,
+  "sha256": "3a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b",
+  "generatedUtc": "2026-10-24T01:00:00.000000Z"
+}
+```
+
+**Client Error Responses (`400 Bad Request`):**
+- Missing `IncidentID`: `{"error": "Missing or empty required parameter: 'IncidentID'"}`
+- Empty `IncidentID`: `{"error": "Missing or empty required parameter: 'IncidentID'"}`
+- Invalid JSON: `{"error": "Invalid JSON in request body: ..."}`
+- Unsupported format: `{"error": "Unsupported report format: 'docx'. Supported: 'pdf', 'html'."}`
+
+**Server Error Response (`500 Internal Server Error`):**
+- Storage / database / compilation failure: `{"error": "Report generation failed: ..."}`
+
+#### 3.9.3 Cosmos DB & SQL Ledger Data Integration
+
+- **Cosmos DB (`timeline-artifacts`)**:
+  - Partition Key: `/incidentId`
+  - Query: `SELECT * FROM c WHERE c.incidentId = @incidentId OR c.IncidentID = @incidentId`
+  - Normalizes Plaso timeline events, process listings (e.g. Volatility `windows.malfind`), network connection tuples (`source_ip`, `destination_ip`, `protocol`), and parsed evidence items.
+- **SQL Ledger (`dbo.EvidenceLedger`)**:
+  - Query: `SELECT ... FROM dbo.EvidenceLedger WHERE IncidentId = ? ORDER BY LedgerEntryId ASC`
+  - Retrieves evidence metadata: `BlobName`, `ArtifactType`, `SizeBytes`, `Sha256Hash`, `AcquiredUtc`, `RecordedUtc`.
+  - Performs cryptographic ledger verification via `ledger.verify_custody_integrity()`.
+
+#### 3.9.4 Jinja2 Report Template Structure
+
+The template at [`src/functions/ReportGenerator/report_template.html`](file:///C:/Users/Jyesh/REACT/src/functions/ReportGenerator/report_template.html) renders the 6 required forensic sections:
+
+1. **Incident Metadata**: Incident ID, target VM hostname, IP address, severity badge, containment/isolation status, UTC generation timestamp, and classification banner.
+2. **Evidence Inventory (with Hashes)**: Tabular inventory listing evidence artifact names, artifact types, formatted sizes (B/KB/MB/GB), acquisition timestamps, and SHA-256 cryptographic digests.
+3. **Process Listings**: Executed process listings, PIDs, PPIDs, executable paths/commands, execution timestamps, and anomaly/injection findings.
+4. **Network Connections**: Active and persistent network connection tuples (Protocol, Source IP/Port, Destination IP/Port, State, Threat Analysis).
+5. **Timeline Events**: Chronologically sorted forensic timeline events parsed by Plaso/Log2Timeline with event sources and parsed message bodies.
+6. **Chain of Custody Verification**: Cryptographic ledger integrity status banner (`VERIFIED`, `FAILED`, or `VERIFICATION UNAVAILABLE`), ledger block information, and complete custody transfer history.
+
+*Security Note: Jinja2 autoescaping is strictly enforced (`autoescape=True`) to prevent Cross-Site Scripting (XSS) from unverified artifact payloads.*
+
+#### 3.9.5 Reports Blob Storage & WORM Immutability
+
+- **Container**: `reports` (defined in `iac/main.bicep` as `resource reportsContainer`)
+- **WORM Policy**: 7-year time-based immutability policy (`retentionDays: 2555`) with versioning enabled and optional legal hold tags applied at provisioning time.
+- **Blob Naming**: `{incidentId}/{reportId}.pdf`
+- **Metadata**: Each report blob is stamped with `IncidentID`, `ReportId`, `Sha256`, `GeneratedUtc`, `ContentType: application/pdf`, and `WORM: true`.
+- **Immutability Protection**: Overwrites are rejected with `ImmutabilityError` / `409 Conflict`.
+
+#### 3.9.6 WeasyPrint PDF Generation & Environment Guidance
+
+- **WeasyPrint**: In Linux production environments (Azure Functions Linux consumption / Dedicated App Service / Container), WeasyPrint converts HTML+CSS into printable PDF documents using Pango and Cairo.
+  - Native Linux package dependencies:
+    ```bash
+    sudo apt-get update && sudo apt-get install -y libpango-1.0-0 libharfbuzz0b libpangoft2-1.0-0
+    ```
+- **Windows / Development Fallback**: On Windows development workstations where GTK/Pango C libraries are not installed, `shared.reporting` automatically falls back to generating a valid, standard PDF-1.4 binary buffer. This allows unit and integration test suites to pass 100% offline without requiring external C libraries.
+
+#### 3.9.7 Required Environment Variables & Application Settings
+
+| Setting | Mock Default | Azure Production Example |
+|---|---|---|
+| `REACT_MOCK_MODE` | `true` | `false` |
+| `REPORTS_CONTAINER` | `reports` | `reports` |
+| `EVIDENCE_ACCOUNT` | `reactenclave01` | `reactevidence` |
+| `EVIDENCE_STORAGE_URL` | `https://reactenclave01.blob.core.windows.net` | `https://<account>.blob.core.windows.net` |
+| `COSMOS_DB_ENDPOINT` | `https://mock-react-cosmos.documents.azure.com:443/` | `https://react-cosmos.documents.azure.com:443/` |
+| `COSMOS_DB_DATABASE` | `react-forensic-db` | `react-forensic-db` |
+| `COSMOS_DB_CONTAINER` | `timeline-artifacts` | `timeline-artifacts` |
+| `SQL_CONNECTION_STRING` | *(mocked in memory)* | `Server=tcp:react-sql.database.windows.net,1433;Database=reactdfir;Authentication=ActiveDirectoryMsi;` |
+
+#### 3.9.8 Running Issue #34 Tests Locally
+
+Install dependencies:
+```bash
+pip install -r src/functions/requirements.txt
+pip install pytest pytest-mock ruff
+```
+
+Run focused ReportGenerator unit tests:
+```bash
+pytest tests/unit/test_person3_report_generator.py -v
+```
+
+Expected output:
+```text
+tests/unit/test_person3_report_generator.py .................... [100%]
+20 passed in ~1.7s
+```
+
+Run lint and format checks:
+```bash
+ruff check src/functions tests/
+ruff format --check src/functions tests/
+```
+
+#### 3.9.9 Local Azure Function Execution with Core Tools
+
+Start the Function App locally in simulated mock mode:
+```bash
+cd src/functions
+REACT_MOCK_MODE=true func start
+```
+
+Trigger report generation via HTTP POST:
+```bash
+curl -X POST http://localhost:7071/api/GenerateReport \
+  -H "Content-Type: application/json" \
+  -d '{"IncidentID": "INC-2026-DEMO-001"}'
+```
+
 ## 4. Continuous Integration (CI/CD)
 
 The test suite runs automatically on GitHub Actions in two workflows:

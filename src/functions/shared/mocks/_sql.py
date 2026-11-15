@@ -1,7 +1,7 @@
 """Stand-in for the ``pyodbc`` connection to the Azure SQL Ledger database.
 
-This is not a SQL engine. It understands exactly the two statement shapes
-``shared.ledger`` issues -- the guarded append and the artifact lookup -- and
+This is not a SQL engine. It understands exactly the statement shapes
+``shared.ledger`` issues -- the guarded append and artifact lookups -- and
 refuses everything else loudly, so a new query cannot silently return empty
 results and be mistaken for "no evidence recorded".
 
@@ -27,8 +27,9 @@ _INSERT = re.compile(
 )
 _LOOKUP = re.compile(
     r"^\s*SELECT\s+(?:TOP\s+\d+\s+)?(?P<columns>.+?)\s+FROM\s+"
-    r"(?P<table>[A-Za-z0-9_.]+)\s+WHERE\s+IncidentId\s*=\s*\?\s+AND\s+"
-    r"ArtifactType\s*=\s*\?",
+    r"(?P<table>[A-Za-z0-9_.]+)\s+WHERE\s+IncidentId\s*=\s*\?"
+    r"(?:\s+AND\s+ArtifactType\s*=\s*\?)?"
+    r"(?:\s+ORDER\s+BY\s+[A-Za-z0-9_.]+.*)?$",
     re.IGNORECASE | re.DOTALL,
 )
 _FORBIDDEN = re.compile(r"^\s*(UPDATE|DELETE|DROP|TRUNCATE|ALTER)\b", re.IGNORECASE)
@@ -88,13 +89,15 @@ class MockCursor:
 
     def _execute_lookup(self, match, parameters):
         columns = [name.strip() for name in match.group("columns").split(",")]
-        incident_id, artifact_type = parameters[0], parameters[1]
+        incident_id = parameters[0]
+        artifact_type = parameters[1] if len(parameters) > 1 else None
         matched = [
             row
             for row in self._world.ledger_rows
-            if row.get("IncidentId") == incident_id and row.get("ArtifactType") == artifact_type
+            if row.get("IncidentId") == incident_id
+            and (artifact_type is None or row.get("ArtifactType") == artifact_type)
         ]
-        matched.sort(key=lambda row: row["LedgerEntryId"], reverse=True)
+        matched.sort(key=lambda row: row.get("LedgerEntryId", 0))
         self._results = [tuple(row.get(column) for column in columns) for row in matched]
         self.rowcount = len(self._results)
 
