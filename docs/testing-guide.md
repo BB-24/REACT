@@ -255,6 +255,171 @@ docker run --rm \
 
 ---
 
+---
+
+### 3.8 Cosmos DB Serverless + Timeline Schema (Issue #33 — P3-3)
+
+Issue #33 implements Person 3 forensic timeline ingestion into Azure Cosmos DB Core (SQL) API Serverless.
+
+#### 3.8.1 What Was Implemented
+
+| Component | Description |
+|---|---|
+| `iac/modules/cosmos-db.bicep` | Bicep module: Cosmos DB Serverless account, `react-forensic-db` database, `timeline-artifacts` container with `/incidentId` partition key |
+| `iac/main.bicep` | Updated to deploy the Cosmos DB module and pass endpoint/database/container to Function App settings |
+| `src/functions/shared/timeline.py` | Timeline artifact schema, `validate_timeline_artifact()`, `convert_plaso_event()`, `normalize_timestamp()` |
+| `src/functions/shared/timeline_ingestion.py` | `ingest_timeline()` engine — reads JSON Lines / JSON array output, validates schema, upserts to Cosmos DB |
+| `src/functions/shared/mocks/_cosmos.py` | In-memory mock Cosmos DB client for offline tests |
+| `src/functions/shared/mocks/__init__.py` | Updated to export mock Cosmos classes |
+| `src/functions/shared/clients.py` | Added `cosmos_client()` and `cosmos_container_client()` helpers |
+| `src/functions/requirements.txt` | Added `azure-cosmos>=4.5.0` |
+| `src/functions/TimelineIngestion/__init__.py` | Azure Functions HTTP trigger blueprint for timeline ingestion |
+| `tests/unit/test_person3_timeline_schema.py` | 22 focused unit tests covering schema, ingestion, and HTTP trigger |
+| `tests/conftest.py` | Added `azure.cosmos` stub so tests run without the SDK installed |
+
+#### 3.8.2 Timeline Artifact Schema
+
+Every item stored in the Cosmos DB `timeline-artifacts` container follows this contract:
+
+```json
+{
+  "id": "art-INC-2026-001-a1b2c3d4e5f6a7b8",
+  "incidentId": "INC-2026-001",
+  "IncidentID": "INC-2026-001",
+  "artifactType": "syslog:line",
+  "timestamp": "2026-10-24T00:01:05.000000Z",
+  "source": "/var/log/syslog",
+  "data": {
+    "message": "sshd accepted publickey for azureuser",
+    "parser": "syslog",
+    "pid": 1234
+  }
+}
+```
+
+- **Partition key**: `/incidentId` — all artifacts for an incident are co-located.
+- **`id`**: Deterministic SHA-256 prefix hash of `(incidentId, timestamp, source, artifactType, data)`, or preserved from the Plaso event's existing `id`/`uuid` field.
+- **`timestamp`**: Always normalized to UTC ISO-8601 (`Z` suffix). Accepts Plaso microsecond integers, ISO strings, or `datetime` objects.
+
+#### 3.8.3 Local Setup and Dependency Installation
+
+```bash
+pip install pytest pytest-mock ruff
+pip install -r src/functions/requirements.txt
+```
+
+#### 3.8.4 Running Issue #33 Tests Locally (Mock-Based — No Azure Required)
+
+Run focused Issue #33 tests in isolation:
+```bash
+pytest tests/unit/test_person3_timeline_schema.py -v
+```
+
+Run with mock mode enabled explicitly:
+```bash
+REACT_MOCK_MODE=true pytest tests/unit/test_person3_timeline_schema.py -v
+```
+
+Expected output:
+```text
+22 passed in ~0.15s
+```
+
+#### 3.8.5 Schema Validation Tests
+
+Covered test scenarios in `tests/unit/test_person3_timeline_schema.py`:
+- Valid artifact schema round-trip
+- Missing/empty `incidentId` (parametrized: `""`, `"   "`, `None`, `12345`)
+- Missing `artifactType`, `source`, `timestamp`, `data` (parametrized per field)
+- Non-dict `data` and non-JSON-serializable `data` values
+- Timestamp normalization: Plaso microseconds, ISO strings, UTC offset conversion
+- Stable and unique artifact ID generation and seed-ID preservation
+- Correct conversion of representative Plaso timeline events
+- Successful ingestion with mocked Cosmos DB container
+- Partition key `/incidentId` consistency and read isolation
+- Empty timeline input (zero records, no failure)
+- Malformed JSON Lines handling (valid lines still ingest, malformed rejected)
+- Database write failures recorded without false success reporting
+- Idempotent re-ingestion via `upsert_item`
+- HTTP trigger blueprint: success path and missing `incidentId` 400 response
+
+#### 3.8.6 Infrastructure Provisioning (Cosmos DB Serverless)
+
+> [!NOTE]
+> No real Azure resources are provisioned during unit tests. The in-memory `MockCosmosClient` is used automatically when `REACT_MOCK_MODE=true`.
+
+**Infrastructure Prerequisites:**
+- Azure CLI >= 2.55
+- Contributor rights on target resource group
+- Bicep CLI (included in `az bicep`)
+
+**Deploy Cosmos DB Serverless module alongside existing enclave:**
+```bash
+az deployment group create   --resource-group rg-forensic-enclave   --template-file iac/main.bicep   --parameters sqlAdminObjectId=<aad-object-id>                sqlAdminLogin=<aad-group-name>                namePrefix=react
+```
+
+The `cosmosDb` module in `main.bicep` provisions:
+- Azure Cosmos DB Serverless account: `react-cosmos-<suffix>`
+- Database: `react-forensic-db`
+- Container: `timeline-artifacts` with partition key `/incidentId`
+- Built-in Data Contributor RBAC role assigned to Function App managed identity
+
+**Required environment variables (populated automatically via Bicep outputs):**
+| Variable | Description | Example |
+|---|---|---|
+| `COSMOS_DB_ENDPOINT` | Cosmos DB account endpoint | `https://react-cosmos-abc12345.documents.azure.com:443/` |
+| `COSMOS_DB_DATABASE` | Database name | `react-forensic-db` |
+| `COSMOS_DB_CONTAINER` | Container name | `timeline-artifacts` |
+| `REACT_MOCK_MODE` | `false` for real Azure, `true` for offline tests | `false` |
+
+#### 3.8.7 Running Ingestion Against a Test Incident (Live Azure)
+
+> [!IMPORTANT]
+> Live Azure integration requires valid `COSMOS_DB_ENDPOINT`, `COSMOS_DB_DATABASE`, `COSMOS_DB_CONTAINER` and managed identity credentials.
+
+```python
+import os
+
+os.environ["COSMOS_DB_ENDPOINT"] = "https://your-cosmos.documents.azure.com:443/"
+os.environ["COSMOS_DB_DATABASE"] = "react-forensic-db"
+os.environ["COSMOS_DB_CONTAINER"] = "timeline-artifacts"
+os.environ["REACT_MOCK_MODE"] = "false"
+
+from src.functions.shared.timeline_ingestion import ingest_timeline
+
+summary = ingest_timeline(
+    timeline_source="/workspace/output/timeline.json",
+    incident_id="INC-2026-001",
+)
+print(f"Written: {summary.written_records}, Rejected: {summary.rejected_records}")
+```
+
+Expected successful output:
+```text
+Written: <N>, Rejected: 0
+```
+
+#### 3.8.8 Verifying Persisted Records in Cosmos DB (Azure Portal)
+
+1. Navigate to Azure Portal → Cosmos DB account → `react-forensic-db` → `timeline-artifacts`
+2. Select **Data Explorer** → run query:
+   ```sql
+   SELECT * FROM c WHERE c.incidentId = 'INC-2026-001'
+   ```
+3. Confirm documents have `id`, `incidentId`, `artifactType`, `timestamp`, `source`, and `data`.
+
+#### 3.8.9 Cleanup Instructions
+
+```bash
+# Remove the Cosmos DB account (irreversible for serverless, data is deleted)
+az cosmosdb delete --name react-cosmos-<suffix> --resource-group rg-forensic-enclave --yes
+```
+
+> [!WARNING]
+> Serverless Cosmos DB does not support a soft-delete period. Deleting the account removes all timeline artifacts permanently.
+
+---
+
 ## 4. Continuous Integration (CI/CD)
 
 The test suite runs automatically on GitHub Actions in two workflows:

@@ -124,6 +124,9 @@ var functionIntegrationSubnetName = 'Function-Integration-Subnet'
 var actualFunctionIntegrationSubnetId = empty(privateEndpointSubnetId)
   ? resourceId('Microsoft.Network/virtualNetworks/subnets', actualVnetName, functionIntegrationSubnetName)
   : functionIntegrationSubnetId
+var cosmosAccountName = toLower('${namePrefix}-cosmos-${substring(suffix, 0, 8)}')
+var cosmosDatabaseName = 'react-forensic-db'
+var cosmosContainerName = 'timeline-artifacts'
 
 // Built-in role definition IDs.
 var storageBlobDataContributor = subscriptionResourceId(
@@ -739,6 +742,21 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   kind: 'elastic'
 }
 
+// --- Cosmos DB Serverless (REQ-3.6 / P3-3) -----------------------------------
+
+module cosmosDb 'modules/cosmos-db.bicep' = {
+  name: 'cosmosDbDeployment'
+  params: {
+    location: location
+    accountName: cosmosAccountName
+    databaseName: cosmosDatabaseName
+    containerName: cosmosContainerName
+    tags: {
+      'react:purpose': 'forensic-enclave'
+    }
+  }
+}
+
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
@@ -786,6 +804,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: 'Driver={ODBC Driver 18 for SQL Server};Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDatabaseName};Authentication=ActiveDirectoryMsi;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;'
         }
         { name: 'LEDGER_TABLE', value: 'dbo.EvidenceLedger' }
+        { name: 'COSMOS_DB_ENDPOINT', value: cosmosDb.outputs.endpoint }
+        { name: 'COSMOS_DB_DATABASE', value: cosmosDb.outputs.databaseName }
+        { name: 'COSMOS_DB_CONTAINER', value: cosmosDb.outputs.containerName }
 
         { name: 'FORENSIC_SUBSCRIPTION_ID', value: forensicSubscriptionId }
         { name: 'FORENSIC_RESOURCE_GROUP', value: resourceGroup().name }
@@ -850,6 +871,20 @@ resource functionKeyVaultSecrets 'Microsoft.Authorization/roleAssignments@2022-0
   }
 }
 
+var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
+
+resource functionCosmosContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
+  name: '${cosmosAccountName}/${guid(cosmosAccountName, functionApp.id, cosmosDataContributorRoleId)}'
+  properties: {
+    roleDefinitionId: '${resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: functionApp.identity.principalId
+    scope: resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)
+  }
+  dependsOn: [
+    cosmosDb
+  ]
+}
+
 // --- Outputs -----------------------------------------------------------------
 
 output storageAccountName string = evidenceStorage.name
@@ -863,7 +898,7 @@ output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output sqlDatabaseName string = ledgerDatabase.name
 output systemTopicName string = systemTopic.name
 output enclaveResourceGroup string = resourceGroup().name
-output enclaveSubscriptionId string = forensicSubscriptionId
+output enclaveSubscriptionId string = subscription().subscriptionId
 
 // P2-5 Outputs
 output storagePrivateEndpointId string = storagePrivateEndpoint.id
@@ -873,6 +908,9 @@ output memoryDumpsContainer string = memoryDumpsContainer.name
 output diskSnapshotsContainer string = diskSnapshotsContainer.name
 output analysisOutputContainer string = analysisOutputContainer.name
 output reportsContainer string = reportsContainer.name
+output cosmosDbEndpoint string = cosmosDb.outputs.endpoint
+output cosmosDbDatabase string = cosmosDb.outputs.databaseName
+output cosmosDbContainer string = cosmosDb.outputs.containerName
 
 @description('Grant this identity Network Contributor + Reader + Disk Snapshot rights on the TARGET subscription, and a contained DB user on the ledger database. See iac/scripts/init-sql-ledger.sql.')
 output postDeploymentPrincipal string = functionApp.identity.principalId

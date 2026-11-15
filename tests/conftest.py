@@ -65,6 +65,19 @@ if _azure_sdk_missing():
 
             return decorator
 
+    class FakeFunctionApp(FakeBlueprint):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.blueprints = []
+
+        def register_blueprint(self, bp):
+            self.blueprints.append(bp)
+
+    class FakeAuthLevel:
+        FUNCTION = "function"
+        ANONYMOUS = "anonymous"
+        ADMIN = "admin"
+
     class FakeBlobSasPermissions:
         def __init__(
             self,
@@ -139,6 +152,8 @@ if _azure_sdk_missing():
     func_mod.HttpRequest = FakeHttpRequest
     func_mod.HttpResponse = FakeHttpResponse
     func_mod.Blueprint = FakeBlueprint
+    func_mod.FunctionApp = FakeFunctionApp
+    func_mod.AuthLevel = FakeAuthLevel
     azure_mod.functions = func_mod
 
     blob_mod.BlobSasPermissions = FakeBlobSasPermissions
@@ -160,3 +175,30 @@ if _azure_sdk_missing():
     sys.modules["azure.mgmt.network.models"] = MagicMock()
     sys.modules["azure.mgmt.compute"] = MagicMock()
     sys.modules["azure.mgmt.compute.models"] = MagicMock()
+
+try:
+    import azure.cosmos  # noqa: F401
+except (ImportError, AttributeError):
+    cosmos_mod = ModuleType("azure.cosmos")
+    cosmos_mod.CosmosClient = MagicMock()
+    cosmos_exceptions_mod = ModuleType("azure.cosmos.exceptions")
+
+    class CosmosError(Exception):
+        pass
+
+    class CosmosResourceNotFoundError(CosmosError):
+        pass
+
+    class CosmosResourceExistsError(CosmosError):
+        pass
+
+    class CosmosHttpResponseError(CosmosError):
+        pass
+
+    cosmos_exceptions_mod.CosmosError = CosmosError
+    cosmos_exceptions_mod.CosmosResourceNotFoundError = CosmosResourceNotFoundError
+    cosmos_exceptions_mod.CosmosResourceExistsError = CosmosResourceExistsError
+    cosmos_exceptions_mod.CosmosHttpResponseError = CosmosHttpResponseError
+    cosmos_mod.exceptions = cosmos_exceptions_mod
+    sys.modules["azure.cosmos"] = cosmos_mod
+    sys.modules["azure.cosmos.exceptions"] = cosmos_exceptions_mod
