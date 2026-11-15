@@ -203,6 +203,7 @@ class World:
             self.blobs = {}
             self.secrets = {}
             self.run_commands = []
+            self.storage_operations = []
             self.events = []
             self.ledger_rows = []
             self.blob_created_handlers = []
@@ -227,6 +228,18 @@ class World:
                 holder.assert_can_overwrite(name)
             blob = MockBlob(account, container, name, data, metadata)
             self.blobs[key] = blob
+            self.storage_operations.append(
+                {
+                    "operation": "PutBlob",
+                    "account": account,
+                    "container": container,
+                    "blobName": name,
+                    "sizeBytes": len(data),
+                    "sha256": blob.sha256(),
+                    "status": "Succeeded",
+                    "timestamp": blob.creation_time.isoformat(),
+                }
+            )
             self.events.append(self._blob_created_event(blob))
             return blob
 

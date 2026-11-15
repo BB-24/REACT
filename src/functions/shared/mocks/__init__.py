@@ -124,6 +124,7 @@ def snapshot_state():
             for blob in sorted(estate.blobs.values(), key=lambda b: (b.container, b.name))
         ],
         "runCommands": list(estate.run_commands),
+        "storageOperations": list(estate.storage_operations),
         "pendingEvents": len(estate.events),
         "ledger": {
             "rows": list(estate.ledger_rows),
