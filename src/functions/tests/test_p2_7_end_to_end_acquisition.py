@@ -6,9 +6,7 @@ from MemoryAcquisition import handle_acquisition
 from shared import ledger, mocks
 
 
-def test_test_001_acquisition_captures_blob_ledger_hash_and_upload_log(
-    mock_estate, post
-):
+def test_test_001_acquisition_captures_blob_ledger_hash_and_upload_log(mock_estate, post):
     """Run the simulated memory script and capture every evidence checkpoint."""
     incident_id = "TEST-001"
     response = handle_acquisition(
